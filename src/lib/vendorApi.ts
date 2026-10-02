@@ -53,10 +53,10 @@ export async function createBusiness(input: CreateBusinessInput): Promise<Busine
   for (let attempt = 0; attempt < 5; attempt++) {
     const slug = attempt === 0 ? baseSlug : `${baseSlug}-${Math.random().toString(36).slice(2, 6)}`;
     const { data, error } = await supabase
-      // order_seq starts at 0 so this vendor's first order is #1
-      // (assign_order_number increments-then-returns). Set explicitly here so it
-      // works regardless of the column's DB default.
-      .insert({ ...input, slug, owner_id: uid, onboarding_complete: true, order_seq: 0 })
+      .from("businesses")
+      // order_seq is omitted so the DB default (0) applies, making this vendor's
+      // first order #1 (assign_order_number increments-then-returns).
+      .insert({ ...input, slug, owner_id: uid, onboarding_complete: true })
       .select("*")
       .single();
 
