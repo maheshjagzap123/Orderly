@@ -49,3 +49,13 @@ button {
   font: inherit;
   cursor: pointer;
 }
+
+@keyframes orderly-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes orderly-new-highlight {
+  0% { box-shadow: 0 0 0 3px rgba(239, 59, 50, 0.35); }
+  100% { box-shadow: var(--shadow-card); }
+}

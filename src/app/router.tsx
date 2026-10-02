@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
 import { RequireAuth } from "./RequireAuth";
+import { VendorBusinessProvider } from "@/hooks/useVendorBusiness";
 import { HealthCheck } from "@/components/HealthCheck";
 import { MenuPage } from "@/features/customer/MenuPage";
 import { TrackingPage } from "@/features/customer/TrackingPage";
@@ -15,23 +16,27 @@ const MenuManagementPage = lazy(() => import("@/features/vendor/MenuManagementPa
 const ItemEditorPage = lazy(() => import("@/features/vendor/ItemEditorPage").then((m) => ({ default: m.ItemEditorPage })));
 const QrPage = lazy(() => import("@/features/vendor/QrPage").then((m) => ({ default: m.QrPage })));
 const ReportsPage = lazy(() => import("@/features/vendor/ReportsPage").then((m) => ({ default: m.ReportsPage })));
-const BusinessSettingsPage = lazy(() => import("@/features/vendor/settings/BusinessSettingsPage").then((m) => ({ default: m.BusinessSettingsPage })));
-const LocationPage = lazy(() => import("@/features/vendor/settings/LocationPage").then((m) => ({ default: m.LocationPage })));
-const PaymentSettingsPage = lazy(() => import("@/features/vendor/settings/PaymentSettingsPage").then((m) => ({ default: m.PaymentSettingsPage })));
+const SettingsPage = lazy(() => import("@/features/vendor/settings/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const ProfilePage = lazy(() => import("@/features/vendor/settings/ProfilePage").then((m) => ({ default: m.ProfilePage })));
 
-/** Wrap a lazily-loaded vendor page with the auth guard + a Suspense fallback. */
-function Vendor(el: ReactNode) {
+function Suspended(el: ReactNode) {
+  return <Suspense fallback={<div style={{ padding: 32 }}>Loading…</div>}>{el}</Suspense>;
+}
+
+/**
+ * Vendor shell: auth guard + a single shared business provider that persists
+ * across all vendor pages (fetched once), so navigation is instant.
+ */
+function VendorShell() {
   return (
     <RequireAuth>
-      <Suspense fallback={<div style={{ padding: 32 }}>Loading…</div>}>{el}</Suspense>
+      <VendorBusinessProvider>
+        <Outlet />
+      </VendorBusinessProvider>
     </RequireAuth>
   );
 }
 
-/**
- * Route map (see docs/10-customer-pages.md and docs/20-vendor-pages.md).
- */
 export const router = createBrowserRouter([
   // --- Dev / smoke test ---
   { path: "/", element: <HealthCheck /> },
@@ -39,27 +44,31 @@ export const router = createBrowserRouter([
   // --- Public customer (no auth) ---
   { path: "/order/:slug", element: <MenuPage mode="QR" /> },
   { path: "/order/:slug/track/:orderNo", element: <TrackingPage /> },
-
-  // --- Kiosk (same screens, kiosk mode) ---
   { path: "/kiosk/:slug", element: <MenuPage mode="KIOSK" /> },
 
   // --- Vendor auth ---
   { path: "/vendor/login", element: <LoginPage /> },
-  { path: "/vendor/onboarding", element: Vendor(<OnboardingWizard />) },
 
-  // --- Vendor app (auth required) ---
-  { path: "/vendor", element: Vendor(<DashboardPage />) },
-  { path: "/vendor/orders", element: Vendor(<OrdersPage />) },
-  { path: "/vendor/orders/:id", element: Vendor(<OrderDetailPage />) },
-  { path: "/vendor/menu", element: Vendor(<MenuManagementPage />) },
-  { path: "/vendor/menu/item/new", element: Vendor(<ItemEditorPage />) },
-  { path: "/vendor/menu/item/:id", element: Vendor(<ItemEditorPage />) },
-  { path: "/vendor/qr", element: Vendor(<QrPage />) },
-  { path: "/vendor/reports", element: Vendor(<ReportsPage />) },
-  { path: "/vendor/settings", element: Vendor(<BusinessSettingsPage />) },
-  { path: "/vendor/settings/payment", element: Vendor(<PaymentSettingsPage />) },
-  { path: "/vendor/settings/location", element: Vendor(<LocationPage />) },
-  { path: "/vendor/settings/profile", element: Vendor(<ProfilePage />) },
+  // --- Vendor app (auth + shared business provider) ---
+  {
+    element: <VendorShell />,
+    children: [
+      { path: "/vendor/onboarding", element: Suspended(<OnboardingWizard />) },
+      { path: "/vendor", element: Suspended(<DashboardPage />) },
+      { path: "/vendor/orders", element: Suspended(<OrdersPage />) },
+      { path: "/vendor/orders/:id", element: Suspended(<OrderDetailPage />) },
+      { path: "/vendor/menu", element: Suspended(<MenuManagementPage />) },
+      { path: "/vendor/menu/item/new", element: Suspended(<ItemEditorPage />) },
+      { path: "/vendor/menu/item/:id", element: Suspended(<ItemEditorPage />) },
+      { path: "/vendor/qr", element: Suspended(<QrPage />) },
+      { path: "/vendor/reports", element: Suspended(<ReportsPage />) },
+      // Settings is a single page with in-memory tabs; keep deep links working.
+      { path: "/vendor/settings", element: Suspended(<SettingsPage />) },
+      { path: "/vendor/settings/location", element: Suspended(<SettingsPage initialTab="location" />) },
+      { path: "/vendor/settings/payment", element: Suspended(<SettingsPage initialTab="payment" />) },
+      { path: "/vendor/settings/profile", element: Suspended(<ProfilePage />) },
+    ],
+  },
 
   // --- Fallback ---
   { path: "*", element: <Navigate to="/" replace /> },

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { signOut } from "@/lib/auth";
 
 const nav = [
@@ -9,9 +9,7 @@ const nav = [
   { to: "/vendor/menu?tab=categories", label: "Categories", icon: "🗂️" },
   { to: "/vendor/reports", label: "Reports", icon: "📈" },
   { to: "/vendor/qr", label: "QR Code", icon: "🔳" },
-  { to: "/vendor/settings", label: "Business Settings", icon: "⚙️" },
-  { to: "/vendor/settings/location", label: "Location & Hours", icon: "📍" },
-  { to: "/vendor/settings/payment", label: "Payment Settings", icon: "💳" },
+  { to: "/vendor/settings", label: "Settings", icon: "⚙️" },
   { to: "/vendor/settings/profile", label: "Profile & Team", icon: "👤" },
 ];
 
@@ -19,16 +17,32 @@ export function VendorLayout({
   children,
   businessName,
   ordersBadge,
+  bare = false,
 }: {
   children: ReactNode;
   businessName?: string;
   ordersBadge?: number;
+  /** Full-screen focus mode: hide sidebar + topbar, show only the content. */
+  bare?: boolean;
 }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
 
   async function handleLogout() {
     await signOut();
     navigate("/vendor/login", { replace: true });
+  }
+
+  // Settings is active on its three tabs but NOT the profile page.
+  const isSettingsActive = pathname.startsWith("/vendor/settings") && !pathname.startsWith("/vendor/settings/profile");
+
+  // Full-screen focus mode: just the scrollable content, no vendor chrome.
+  if (bare) {
+    return (
+      <div style={{ height: "100vh", overflow: "auto", background: "var(--color-bg)" }}>
+        <main style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>{children}</main>
+      </div>
+    );
   }
 
   return (
@@ -46,7 +60,9 @@ export function VendorLayout({
               key={n.label}
               to={n.to}
               end={n.end}
-              style={({ isActive }) => navItem(isActive)}
+              style={({ isActive }) =>
+                navItem(n.label === "Settings" ? isSettingsActive : n.label === "Profile & Team" ? pathname.startsWith("/vendor/settings/profile") : isActive)
+              }
             >
               <span>{n.icon}</span>
               <span style={{ flex: 1 }}>{n.label}</span>

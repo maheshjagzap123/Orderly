@@ -190,16 +190,31 @@ export async function updateOrderStatus(orderId: string, status: OrderStatus): P
 }
 
 /** Fetch all order_items for a set of order ids, grouped by order. */
-export async function getOrderItemsFor(orderIds: string[]): Promise<Record<string, OrderItem[]>> {
+/** order_items row plus the current item image (joined from items), for display. */
+export type OrderItemWithImage = OrderItem & { image_url: string | null };
+
+export async function getOrderItemsFor(orderIds: string[]): Promise<Record<string, OrderItemWithImage[]>> {
   if (orderIds.length === 0) return {};
+
   const { data, error } = await supabase
     .from("order_items")
     .select("*")
     .in("order_id", orderIds);
   if (error) throw error;
-  const map: Record<string, OrderItem[]> = {};
-  for (const row of data ?? []) {
-    (map[row.order_id] ??= []).push(row);
+  const rows = data ?? [];
+
+  // Look up current images for the referenced items in one query.
+  // item_id can be null (item deleted) — those fall back to a placeholder.
+  const itemIds = [...new Set(rows.map((r) => r.item_id).filter((id): id is string => !!id))];
+  const imageById = new Map<string, string | null>();
+  if (itemIds.length > 0) {
+    const { data: imgs } = await supabase.from("items").select("id,image_url").in("id", itemIds);
+    for (const it of imgs ?? []) imageById.set(it.id, it.image_url);
+  }
+
+  const map: Record<string, OrderItemWithImage[]> = {};
+  for (const row of rows) {
+    (map[row.order_id] ??= []).push({ ...row, image_url: row.item_id ? imageById.get(row.item_id) ?? null : null });
   }
   return map;
 }

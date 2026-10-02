@@ -9,28 +9,104 @@ export function soundEnabled(): boolean {
   return localStorage.getItem(SOUND_PREF_KEY) !== "off";
 }
 
-/** Play a short chime using the Web Audio API (no asset file needed). */
-function playChime() {
-  if (!soundEnabled()) return;
+/** Voice-announcement preference (speaks the new order aloud). Defaults OFF. */
+export const VOICE_PREF_KEY = "orderly.voiceAlerts";
+export function voiceEnabled(): boolean {
+  return localStorage.getItem(VOICE_PREF_KEY) === "on";
+}
+
+/**
+ * Speak a new-order announcement using the browser's SpeechSynthesis API.
+ * `force` ignores the preference (used to test when turning voice on).
+ * No external service or audio files — all local to the browser.
+ */
+export function speakOrder(text: string, force = false) {
+  if (!force && !voiceEnabled()) return;
+  try {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    synth.cancel(); // don't queue up a backlog if several arrive
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.95;
+    u.pitch = 1;
+    u.volume = 1;
+    synth.speak(u);
+  } catch {
+    /* speech not available — ignore */
+  }
+}
+
+/** Approximate chime length in ms (used to sequence voice after it). */
+export const CHIME_MS = 1500;
+
+/**
+ * One shared AudioContext for the whole app. Creating a new context per chime is
+ * unreliable (browsers cap them and new ones start "suspended"), which caused the
+ * chime to play only sometimes. We keep a single context and resume it as needed.
+ */
+let sharedCtx: AudioContext | null = null;
+function getAudioCtx(): AudioContext | null {
   try {
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new Ctx();
-    const now = ctx.currentTime;
-    // Two quick ascending notes.
-    [880, 1174].forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = freq;
-      const start = now + i * 0.16;
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.25, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.15);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(start);
-      osc.stop(start + 0.16);
-    });
-    setTimeout(() => ctx.close(), 600);
+    if (!Ctx) return null;
+    if (!sharedCtx || sharedCtx.state === "closed") sharedCtx = new Ctx();
+    if (sharedCtx.state === "suspended") void sharedCtx.resume();
+    return sharedCtx;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Unlock/resume the audio context from a user gesture (e.g. clicking a toggle).
+ * Keeping the context alive this way lets later programmatic chimes play reliably.
+ */
+export function unlockAudio() {
+  getAudioCtx();
+}
+
+/** Schedule the actual tones on a running context. */
+function scheduleChime(ctx: AudioContext) {
+  // Resume is async; start a touch later so notes are never scheduled in the past.
+  const start0 = ctx.currentTime + 0.06;
+  const notes = [1046.5, 1318.5, 1568.0]; // C6, E6, G6
+  const noteDur = 0.22;
+  const sequence: { freq: number; at: number }[] = [];
+  notes.forEach((f, i) => sequence.push({ freq: f, at: i * noteDur }));         // first run
+  notes.forEach((f, i) => sequence.push({ freq: f, at: 0.78 + i * noteDur }));   // second run
+
+  for (const n of sequence) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.value = n.freq;
+    const start = start0 + n.at;
+    // Linear envelope (reliable regardless of starting value).
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(0.35, start + 0.03);
+    gain.gain.linearRampToValueAtTime(0, start + noteDur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + noteDur + 0.02);
+  }
+}
+
+/**
+ * Play a ~1.5s new-order chime using the shared Web Audio context.
+ * `force` plays even when the sound preference is off — used as a test tone.
+ * Resumes the context first (and waits if needed) so it plays reliably every time.
+ */
+export function playChime(force = false) {
+  if (!force && !soundEnabled()) return;
+  try {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === "suspended") {
+      // Wait for resume to complete before scheduling, otherwise the first chime is dropped.
+      ctx.resume().then(() => scheduleChime(ctx)).catch(() => {});
+    } else {
+      scheduleChime(ctx);
+    }
   } catch {
     /* audio not available / blocked — ignore */
   }
@@ -102,10 +178,13 @@ export function useRealtimeOrders(businessId: string | undefined, limit = 15, no
           });
 
           // Notify only for genuinely new orders after the first load.
+          // Fire the chime HERE, synchronously, exactly once per INSERT — this is the
+          // reliable path (not dependent on React render/effect timing). Voice is
+          // handled by the Orders page once the order's items are loaded.
           if (notify && isNew && primed.current) {
             setNewOrderCount((c) => c + 1);
             setLatestNew(row);
-            playChime();
+            playChime(); // respects the sound preference internally
           }
         }
       )

@@ -96,6 +96,21 @@ export function DashboardPage() {
         </div>
       </div>
 
+      {/* Active work summary (numbers only — manage orders on the Orders page) */}
+      {data && (data.statusCounts.NEW + data.statusCounts.ACCEPTED + data.statusCounts.PREPARING + data.statusCounts.READY) > 0 && (
+        <div style={activeStrip}>
+          <span style={{ fontWeight: 700 }}>
+            Active Orders: {data.statusCounts.NEW + data.statusCounts.ACCEPTED + data.statusCounts.PREPARING + data.statusCounts.READY}
+          </span>
+          <span style={{ color: "var(--color-text-muted)" }}>·</span>
+          <span>🟠 New {data.statusCounts.NEW}</span>
+          <span>🔵 Accepted {data.statusCounts.ACCEPTED}</span>
+          <span>🔥 Preparing {data.statusCounts.PREPARING}</span>
+          <span>🟢 Ready {data.statusCounts.READY}</span>
+          <button style={{ ...linkBtn, marginLeft: "auto" }} onClick={() => navigate("/vendor/orders")}>Manage Orders →</button>
+        </div>
+      )}
+
       {/* KPI cards */}
       <div style={kpiGrid}>
         <Kpi label="Today's Orders" icon="🛒" value={data ? String(data.kpis.orders.value) : "—"} trend={data?.kpis.orders.deltaPct ?? null} loading={dataLoading} />
@@ -320,6 +335,11 @@ const cardBase: React.CSSProperties = {
   boxShadow: "var(--shadow-card)",
 };
 const kpiGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginTop: 20 };
+const activeStrip: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginTop: 18,
+  background: "var(--color-surface)", border: "1px solid var(--color-border)",
+  borderRadius: 12, padding: "12px 16px", boxShadow: "var(--shadow-card)", fontSize: 14,
+};
 const row2: React.CSSProperties = { display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginTop: 16, alignItems: "stretch" };
 const kpiIcon: React.CSSProperties = { fontSize: 20, width: 42, height: 42, borderRadius: 12, background: "var(--color-bg)", display: "grid", placeItems: "center", flexShrink: 0 };
 const storeControl: React.CSSProperties = {

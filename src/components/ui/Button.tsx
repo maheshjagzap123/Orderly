@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type Variant = "primary" | "secondary" | "ghost" | "positive";
+type Variant = "primary" | "secondary" | "ghost" | "positive" | "success" | "danger" | "warning" | "info";
 
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
@@ -20,6 +20,10 @@ const base: React.CSSProperties = {
 const variants: Record<Variant, React.CSSProperties> = {
   primary: { background: "var(--color-primary)", color: "#fff" },
   positive: { background: "var(--color-positive)", color: "#fff" },
+  success: { background: "var(--color-positive)", color: "#fff" },
+  danger: { background: "var(--color-danger)", color: "#fff" },
+  warning: { background: "var(--color-warning)", color: "#fff" },
+  info: { background: "var(--color-info)", color: "#fff" },
   secondary: { background: "#fff", color: "var(--color-text)", borderColor: "var(--color-border)" },
   ghost: { background: "transparent", color: "var(--color-text-muted)" },
 };

@@ -178,11 +178,7 @@ function MenuInner({
         <CheckoutModal
           business={business}
           mode={mode}
-          onClose={() => {
-            setCheckoutOpen(false);
-            // Kiosk: after the checkout flow closes (incl. "Order Again"), reset for the next customer.
-            if (isKiosk) onKioskReset?.();
-          }}
+          onClose={() => setCheckoutOpen(false)}
         />
       )}
 
