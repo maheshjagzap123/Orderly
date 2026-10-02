@@ -59,11 +59,17 @@ function MenuInner({ business, menu, mode }: { business: Business; menu: Menu; m
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const canOrder = business.is_open && business.accepting_orders;
+  const [browseAnyway, setBrowseAnyway] = useState(false);
 
   const visibleItems = useMemo(() => {
     if (activeCat === "all") return menu.items;
     return menu.items.filter((i) => i.category_id === activeCat);
   }, [menu.items, activeCat]);
+
+  // Store closed → dedicated full screen (customer can choose to browse the menu).
+  if (!business.is_open && !browseAnyway) {
+    return <ClosedScreen business={business} onBrowse={() => setBrowseAnyway(true)} />;
+  }
 
   return (
     <div style={{ paddingBottom: 90 }}>
@@ -85,16 +91,19 @@ function MenuInner({ business, menu, mode }: { business: Business; menu: Menu; m
 
       {!canOrder && (
         <div style={pausedBanner}>
-          {business.is_open ? "Not accepting orders right now." : "This stall is currently closed."} You can still browse the menu.
+          <strong>{business.is_open ? "⏸ Orders are temporarily paused." : "🔒 This stall is currently closed."}</strong>{" "}
+          You can browse the menu, but ordering is unavailable right now.
         </div>
       )}
 
-      {/* Category tabs */}
+      {/* Category tabs (sticky) */}
       <div style={tabBar}>
-        <Tab label="All Items" active={activeCat === "all"} onClick={() => setActiveCat("all")} />
-        {menu.categories.map((c) => (
-          <Tab key={c.id} label={c.name} active={activeCat === c.id} onClick={() => setActiveCat(c.id)} />
-        ))}
+        <div style={tabBarInner}>
+          <Tab label="All Items" active={activeCat === "all"} onClick={() => setActiveCat("all")} />
+          {menu.categories.map((c) => (
+            <Tab key={c.id} label={c.name} active={activeCat === c.id} onClick={() => setActiveCat(c.id)} />
+          ))}
+        </div>
       </div>
 
       {/* Body: menu grid + cart */}
@@ -183,6 +192,42 @@ const Center = ({ children }: { children: React.ReactNode }) => (
   <div style={{ display: "grid", placeItems: "center", minHeight: "60vh", padding: 24, textAlign: "center", color: "var(--color-text-muted)" }}>{children}</div>
 );
 
+/** Full-screen "we're closed" state shown when a store is not open. */
+function ClosedScreen({ business, onBrowse }: { business: Business; onBrowse: () => void }) {
+  const opensAt = business.open_time ? to12hLabel(business.open_time) : null;
+  return (
+    <div style={{ display: "grid", placeItems: "center", minHeight: "100vh", padding: 24, textAlign: "center" }}>
+      <div style={{ maxWidth: 420 }}>
+        <div style={logoCircle}>🍳</div>
+        <h1 style={{ margin: "18px 0 4px" }}>{business.name}</h1>
+        <div style={{ fontSize: 48, margin: "18px 0 8px" }}>😴</div>
+        <h2 style={{ margin: "0 0 6px" }}>We're Closed</h2>
+        <p style={{ color: "var(--color-text-muted)", margin: "0 0 6px" }}>
+          {opensAt ? `We open at ${opensAt}.` : "We're not taking orders right now."}
+        </p>
+        <p style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+          {formatHours(business.open_time, business.close_time)}
+        </p>
+        <button
+          onClick={onBrowse}
+          style={{ background: "none", border: "1px solid var(--color-border)", borderRadius: 10, padding: "10px 18px", marginTop: 16, cursor: "pointer", fontWeight: 600 }}
+        >
+          View Menu
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Local 12-hour label from an "HH:MM" time string. */
+function to12hLabel(hhmm: string): string {
+  const [h, m = "00"] = hhmm.split(":");
+  let hr = parseInt(h, 10);
+  const period = hr >= 12 ? "PM" : "AM";
+  hr = hr % 12 || 12;
+  return `${hr}:${m} ${period}`;
+}
+
 const badgeLabel = (b: string) => (b === "POPULAR" ? "Popular" : b === "BESTSELLER" ? "Bestseller" : "New");
 
 // ---- styles ----
@@ -191,7 +236,8 @@ const heroOverlay: React.CSSProperties = { position: "absolute", inset: 0, backg
 const heroContent: React.CSSProperties = { position: "relative", display: "flex", gap: 16, alignItems: "center", padding: 24, maxWidth: 1100, margin: "0 auto", width: "100%" };
 const logoCircle: React.CSSProperties = { width: 72, height: 72, borderRadius: "50%", background: "#f5c518", display: "grid", placeItems: "center", fontSize: 34, flexShrink: 0 };
 const pausedBanner: React.CSSProperties = { background: "#fef3c7", color: "#92400e", padding: "10px 16px", textAlign: "center", fontSize: 14 };
-const tabBar: React.CSSProperties = { display: "flex", gap: 8, padding: "14px 24px", overflowX: "auto", background: "var(--color-surface)", borderBottom: "1px solid var(--color-border)", maxWidth: 1100, margin: "0 auto" };
+const tabBar: React.CSSProperties = { position: "sticky", top: 0, zIndex: 10, padding: "14px 24px", overflowX: "auto", background: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" };
+const tabBarInner: React.CSSProperties = { display: "flex", gap: 8, maxWidth: 1100, margin: "0 auto" };
 const tab = (active: boolean): React.CSSProperties => ({ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 999, border: "none", whiteSpace: "nowrap", background: active ? "#fde8e6" : "transparent", color: active ? "var(--color-primary)" : "var(--color-text-muted)", fontWeight: 600, borderBottom: active ? "2px solid var(--color-primary)" : "2px solid transparent" });
 const bodyGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 360px", gap: 24, padding: 24, maxWidth: 1100, margin: "0 auto", alignItems: "start" };
 const cartColumn: React.CSSProperties = { position: "sticky", top: 16 };

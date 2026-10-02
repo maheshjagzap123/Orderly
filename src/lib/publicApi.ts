@@ -42,6 +42,99 @@ export interface CartLineInput {
   quantity: number;
 }
 
+/** Reason an order could not be placed, used by the customer UI to react precisely. */
+export type OrderBlockReason =
+  | "STORE_CLOSED"
+  | "ITEM_UNAVAILABLE"
+  | "PRICE_CHANGED"
+  | "EMPTY_CART";
+
+/** Thrown by revalidation / placeOrder so the UI can show the right recovery screen. */
+export class OrderError extends Error {
+  reason: OrderBlockReason;
+  constructor(reason: OrderBlockReason, message: string) {
+    super(message);
+    this.name = "OrderError";
+    this.reason = reason;
+  }
+}
+
+export interface PriceChange {
+  itemId: string;
+  name: string;
+  oldPrice: number;
+  newPrice: number;
+}
+
+export interface RevalidateResult {
+  ok: boolean;
+  storeOpen: boolean;
+  /** item ids that are gone or sold out, with their names for messaging */
+  unavailable: { itemId: string; name: string }[];
+  /** price differences between the client cart and current DB prices */
+  priceChanges: PriceChange[];
+  /** fresh item rows keyed by id (authoritative prices/availability) */
+  freshItems: Record<string, Item>;
+}
+
+/**
+ * Revalidate a cart against the live DB *before* payment, without creating anything.
+ * Used to detect sold-out items and price changes so the customer can review.
+ * The browser cart is never trusted for money — this is a UX pre-check; the real
+ * recalculation still happens in placeOrder / the payment Edge Function.
+ */
+export async function revalidateCart(
+  businessId: string,
+  lines: { item_id: string; quantity: number; clientPrice: number }[]
+): Promise<RevalidateResult> {
+  const { data: business, error: bizErr } = await supabase
+    .from("businesses")
+    .select("is_open,accepting_orders")
+    .eq("id", businessId)
+    .maybeSingle();
+  if (bizErr) throw bizErr;
+
+  const storeOpen = Boolean(business?.is_open && business?.accepting_orders);
+
+  const ids = lines.map((l) => l.item_id);
+  const { data: items, error: itemsErr } = await supabase
+    .from("items")
+    .select("*")
+    .in("id", ids)
+    .eq("business_id", businessId);
+  if (itemsErr) throw itemsErr;
+
+  const itemMap = new Map((items ?? []).map((i) => [i.id, i]));
+  const freshItems: Record<string, Item> = {};
+  const unavailable: { itemId: string; name: string }[] = [];
+  const priceChanges: PriceChange[] = [];
+
+  for (const line of lines) {
+    const item = itemMap.get(line.item_id);
+    if (!item || !item.is_available) {
+      unavailable.push({ itemId: line.item_id, name: item?.name ?? "An item" });
+      continue;
+    }
+    freshItems[item.id] = item;
+    if (Number(item.price) !== Number(line.clientPrice)) {
+      priceChanges.push({
+        itemId: item.id,
+        name: item.name,
+        oldPrice: Number(line.clientPrice),
+        newPrice: Number(item.price),
+      });
+    }
+  }
+
+  return {
+    ok: storeOpen && unavailable.length === 0 && priceChanges.length === 0,
+    storeOpen,
+    unavailable,
+    priceChanges,
+    freshItems,
+  };
+}
+
 export interface PlacedOrder {
   order: Order;
   orderNumber: number;
@@ -62,7 +155,7 @@ export async function placeOrder(args: {
   lines: CartLineInput[];
 }): Promise<PlacedOrder> {
   const { businessId, source, customerName, lines } = args;
-  if (lines.length === 0) throw new Error("Cart is empty");
+  if (lines.length === 0) throw new OrderError("EMPTY_CART", "Cart is empty");
 
   // 1. Re-read business (tax + open/accepting state) and the exact items.
   const { data: business, error: bizErr } = await supabase
@@ -73,7 +166,7 @@ export async function placeOrder(args: {
   if (bizErr) throw bizErr;
   if (!business) throw new Error("Business not found");
   if (!business.is_open || !business.accepting_orders) {
-    throw new Error("This stall is not accepting orders right now");
+    throw new OrderError("STORE_CLOSED", "This stall is not accepting orders right now");
   }
 
   const itemIds = lines.map((l) => l.item_id);
@@ -90,8 +183,8 @@ export async function placeOrder(args: {
   let subtotal = 0;
   const resolved = lines.map((l) => {
     const item = itemMap.get(l.item_id);
-    if (!item) throw new Error("An item is no longer available");
-    if (!item.is_available) throw new Error(`${item.name} is sold out`);
+    if (!item) throw new OrderError("ITEM_UNAVAILABLE", "An item is no longer available");
+    if (!item.is_available) throw new OrderError("ITEM_UNAVAILABLE", `${item.name} is sold out`);
     if (l.quantity <= 0) throw new Error("Invalid quantity");
     const lineTotal = Number(item.price) * l.quantity;
     subtotal += lineTotal;

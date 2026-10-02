@@ -60,16 +60,38 @@ export function OrderTracker({
       <div style={{ fontSize: 32, fontWeight: 800, color: "var(--color-primary)" }}>#{orderNumber}</div>
       {order && <div style={{ color: "var(--color-text-muted)", marginTop: 4 }}>Total {formatINR(Number(order.total))} · Paid</div>}
 
+      {order?.status === "CANCELLED" && (
+        <div style={{ background: "#fdecea", color: "#b42318", padding: "10px 12px", borderRadius: 10, fontSize: 14, margin: "14px 0" }}>
+          This order was cancelled. If you were charged, your payment will be refunded.
+        </div>
+      )}
+
       {/* Timeline */}
       <div style={{ textAlign: "left", margin: "22px 0" }}>
         {STEPS.map((s, i) => {
+          const done = i < currentIdx;
+          const current = i === currentIdx;
           const reached = i <= currentIdx;
+          // dot: filled check when done, pulsing ring when current, hollow when pending
+          const dotBg = done ? "var(--color-positive)" : current ? "var(--color-primary)" : "transparent";
+          const dotBorder = reached ? dotBg : "2px solid var(--color-border)";
           return (
-            <div key={s} style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 0" }}>
-              <span style={{ width: 22, height: 22, borderRadius: "50%", background: reached ? "var(--color-positive)" : "var(--color-border)", color: "#fff", display: "grid", placeItems: "center", fontSize: 12 }}>
-                {reached ? "✓" : ""}
+            <div key={s} style={{ display: "flex", alignItems: "center", gap: 12, padding: "4px 0", position: "relative" }}>
+              {/* connector line to the next step */}
+              {i < STEPS.length - 1 && (
+                <span style={{ position: "absolute", left: 10, top: 26, width: 2, height: 18, background: done ? "var(--color-positive)" : "var(--color-border)" }} />
+              )}
+              <span
+                style={{
+                  width: 22, height: 22, borderRadius: "50%",
+                  background: dotBg, border: typeof dotBorder === "string" && dotBorder.startsWith("2px") ? dotBorder : "none",
+                  color: "#fff", display: "grid", placeItems: "center", fontSize: 12, flexShrink: 0,
+                  boxShadow: current ? "0 0 0 4px rgba(220,38,38,0.15)" : "none",
+                }}
+              >
+                {done ? "✓" : current ? "●" : ""}
               </span>
-              <span style={{ fontWeight: i === currentIdx ? 700 : 400, color: reached ? "var(--color-text)" : "var(--color-text-muted)" }}>
+              <span style={{ fontWeight: current ? 700 : 400, color: reached ? "var(--color-text)" : "var(--color-text-muted)" }}>
                 {LABELS[s]}
               </span>
             </div>
@@ -78,8 +100,8 @@ export function OrderTracker({
       </div>
 
       {order?.status === "READY" && (
-        <div style={{ background: "#dcfce7", color: "#166534", padding: "10px 12px", borderRadius: 10, fontSize: 14, marginBottom: 14 }}>
-          Your order is ready — please collect it at the counter.
+        <div style={{ background: "#dcfce7", color: "#166534", padding: "14px 12px", borderRadius: 10, fontSize: 15, fontWeight: 600, marginBottom: 14, display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+          🔔 Your order is ready! Please collect it at the counter.
         </div>
       )}
 

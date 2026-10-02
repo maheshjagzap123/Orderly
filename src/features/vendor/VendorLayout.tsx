@@ -32,7 +32,7 @@ export function VendorLayout({
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
+    <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
       {/* Sidebar */}
       <aside style={sidebar}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px 18px" }}>
@@ -66,7 +66,7 @@ export function VendorLayout({
       </aside>
 
       {/* Main */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
         <header style={topbar}>
           <div style={onlinePill}>● Online</div>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -81,7 +81,7 @@ export function VendorLayout({
           </div>
         </header>
 
-        <main style={{ padding: 24, overflow: "auto" }}>{children}</main>
+        <main style={{ padding: 24, overflow: "auto", flex: 1, minHeight: 0 }}>{children}</main>
       </div>
     </div>
   );
@@ -89,12 +89,15 @@ export function VendorLayout({
 
 const sidebar: React.CSSProperties = {
   width: 240,
+  flexShrink: 0,
+  height: "100vh",
   background: "var(--color-sidebar)",
   color: "#e5e7eb",
   padding: 16,
   display: "flex",
   flexDirection: "column",
   gap: 4,
+  overflowY: "auto",
 };
 const brandLogo: React.CSSProperties = {
   width: 34,
@@ -133,6 +136,7 @@ const helpCard: React.CSSProperties = {
 };
 const topbar: React.CSSProperties = {
   height: 60,
+  flexShrink: 0,
   background: "var(--color-surface)",
   borderBottom: "1px solid var(--color-border)",
   display: "flex",

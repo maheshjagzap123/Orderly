@@ -15,6 +15,18 @@ export interface PayResult {
   orderNumber: number;
 }
 
+/** How a payment ended, so the checkout UI can show the right screen. */
+export type PaymentFailureKind = "CANCELLED" | "FAILED" | "TIMEOUT";
+
+export class PaymentError extends Error {
+  kind: PaymentFailureKind;
+  constructor(kind: PaymentFailureKind, message: string) {
+    super(message);
+    this.name = "PaymentError";
+    this.kind = kind;
+  }
+}
+
 /**
  * Pay for a cart.
  * - Dev (no Razorpay key): server recalculates + auto-confirms via placeOrder().
@@ -51,7 +63,7 @@ async function payWithRazorpay(args: PayArgs): Promise<PayResult> {
       description: "Order payment",
       prefill: { name: args.customerName ?? "" },
       handler: () => resolve(),
-      modal: { ondismiss: () => reject(new Error("Payment cancelled")) },
+      modal: { ondismiss: () => reject(new PaymentError("CANCELLED", "Payment cancelled")) },
     });
     rzp.open();
   });
@@ -78,8 +90,8 @@ async function waitForOrderNumber(orderId: string, tries = 20, delayMs = 1000): 
   for (let i = 0; i < tries; i++) {
     const { data } = await supabase.from("orders").select("order_number,payment_status").eq("id", orderId).maybeSingle();
     if (data?.order_number != null) return data.order_number;
-    if (data?.payment_status === "FAILED") throw new Error("Payment failed");
+    if (data?.payment_status === "FAILED") throw new PaymentError("FAILED", "Payment failed");
     await new Promise((r) => setTimeout(r, delayMs));
   }
-  throw new Error("Payment is taking longer than expected. Check your order history shortly.");
+  throw new PaymentError("TIMEOUT", "Payment is taking longer than expected. Check your order history shortly.");
 }

@@ -15,6 +15,7 @@ interface CartContextValue {
   qtyOf: (itemId: string) => number;
   add: (item: Item) => void;
   setQty: (itemId: string, qty: number) => void;
+  updatePrice: (itemId: string, newPrice: number) => void;
   remove: (itemId: string) => void;
   clear: () => void;
 }
@@ -52,6 +53,10 @@ export function CartProvider({ taxPercent, children }: { taxPercent: number; chi
           if (qty <= 0) return prev.filter((l) => l.item.id !== itemId);
           return prev.map((l) => (l.item.id === itemId ? { ...l, quantity: qty } : l));
         }),
+      updatePrice: (itemId, newPrice) =>
+        setLines((prev) =>
+          prev.map((l) => (l.item.id === itemId ? { ...l, item: { ...l.item, price: newPrice } } : l))
+        ),
       remove: (itemId) => setLines((prev) => prev.filter((l) => l.item.id !== itemId)),
       clear: () => setLines([]),
     };
