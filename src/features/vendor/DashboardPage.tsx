@@ -9,12 +9,14 @@ import { getTodayMetrics, getDashboardAnalytics, updateBusiness, type TodayMetri
 import { formatINR, formatHours } from "@/lib/format";
 import { ComboChart } from "@/components/charts/ComboChart";
 import { BarChart } from "@/components/charts/BarChart";
+import { NewOrderToast } from "@/components/NewOrderToast";
+import { ConnectionBanner } from "@/components/ConnectionBanner";
 import type { Order } from "@/lib/database.types";
 
 export function DashboardPage() {
   const navigate = useNavigate();
   const { business, loading, setBusiness } = useVendorBusiness();
-  const { orders, connected } = useRealtimeOrders(business?.id, 15);
+  const { orders, connected, latestNew, newOrderCount, acknowledge } = useRealtimeOrders(business?.id, 15, true);
   const [metrics, setMetrics] = useState<TodayMetrics | null>(null);
   const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null);
 
@@ -44,6 +46,17 @@ export function DashboardPage() {
 
   return (
     <VendorLayout businessName={business.name} ordersBadge={activeOrders.length}>
+      <ConnectionBanner connected={connected} />
+
+      {latestNew && (
+        <NewOrderToast
+          order={latestNew}
+          count={newOrderCount}
+          onView={() => { acknowledge(); navigate("/vendor/orders"); }}
+          onDismiss={acknowledge}
+        />
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
         <div>
           <h1 style={{ margin: 0 }}>Good day, {business.name.split(" ")[0]}! 👋</h1>
@@ -51,8 +64,18 @@ export function DashboardPage() {
             Here's what's happening at your business today.
           </p>
         </div>
-        <div style={{ fontSize: 12, color: connected ? "var(--color-positive)" : "var(--color-text-muted)" }}>
-          {connected ? "● Realtime connected" : "○ Connecting…"}
+
+        {/* Prominent store control: Open/Paused + Pause/Resume */}
+        <div style={storeControl}>
+          <span style={storeState(business.accepting_orders)}>
+            {business.accepting_orders ? "🟢 Accepting Orders" : "🟠 Orders Paused"}
+          </span>
+          <Button
+            variant={business.accepting_orders ? "secondary" : "primary"}
+            onClick={toggleAccepting}
+          >
+            {business.accepting_orders ? "Pause Orders" : "Resume Orders"}
+          </Button>
         </div>
       </div>
 
@@ -232,6 +255,21 @@ const kpiGrid: React.CSSProperties = {
   gap: 16,
   marginTop: 20,
 };
+const storeControl: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 12,
+  background: "var(--color-surface)",
+  border: "1px solid var(--color-border)",
+  borderRadius: 12,
+  padding: "10px 14px",
+  boxShadow: "var(--shadow-card)",
+};
+const storeState = (on: boolean): React.CSSProperties => ({
+  fontWeight: 700,
+  fontSize: 14,
+  color: on ? "var(--color-positive)" : "#b45309",
+});
 const toggle = (on: boolean): React.CSSProperties => ({
   width: 46,
   height: 26,

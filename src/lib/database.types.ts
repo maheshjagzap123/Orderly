@@ -94,6 +94,8 @@ export type Order = {
   payment_status: PaymentStatus;
   placed_at: string;
   confirmed_at: string | null;
+  cancel_reason: string | null;
+  cancelled_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -201,6 +203,8 @@ export interface Database {
           | "payment_status"
           | "placed_at"
           | "confirmed_at"
+          | "cancel_reason"
+          | "cancelled_at"
         >;
         Update: Partial<Order>;
         Relationships: [];
@@ -231,6 +235,10 @@ export interface Database {
       assign_order_number: {
         Args: { p_order_id: string };
         Returns: number;
+      };
+      cancel_order: {
+        Args: { p_order_id: string; p_reason: string };
+        Returns: undefined;
       };
     };
     Enums: {

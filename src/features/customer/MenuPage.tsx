@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { Business, Item } from "@/lib/database.types";
 import { getBusinessBySlug, getMenu, type Menu } from "@/lib/publicApi";
@@ -24,6 +24,11 @@ export function MenuPage({ mode = "QR" }: { mode?: "QR" | "KIOSK" }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Kiosk session: "started" gates the menu behind a Start Order screen, and
+  // `sessionKey` is bumped to fully reset the cart/menu after each order or idle timeout.
+  const [started, setStarted] = useState(mode !== "KIOSK");
+  const [sessionKey, setSessionKey] = useState(0);
+
   useEffect(() => {
     (async () => {
       try {
@@ -45,21 +50,49 @@ export function MenuPage({ mode = "QR" }: { mode?: "QR" | "KIOSK" }) {
   if (loading) return <Center>Loading menu…</Center>;
   if (error || !business || !menu) return <Center>{error ?? "Something went wrong"}</Center>;
 
+  // Kiosk Start Order screen.
+  if (mode === "KIOSK" && !started) {
+    return <KioskStartScreen business={business} onStart={() => setStarted(true)} />;
+  }
+
+  /** End the kiosk session: clear everything and return to the Start screen. */
+  const resetKiosk = () => {
+    setStarted(false);
+    setSessionKey((k) => k + 1);
+  };
+
   return (
-    <CartProvider taxPercent={Number(business.tax_percent)}>
-      <MenuInner business={business} menu={menu} mode={mode} />
+    <CartProvider key={sessionKey} taxPercent={Number(business.tax_percent)}>
+      <MenuInner business={business} menu={menu} mode={mode} onKioskReset={mode === "KIOSK" ? resetKiosk : undefined} />
     </CartProvider>
   );
 }
 
-function MenuInner({ business, menu, mode }: { business: Business; menu: Menu; mode: "QR" | "KIOSK" }) {
+function MenuInner({
+  business,
+  menu,
+  mode,
+  onKioskReset,
+}: {
+  business: Business;
+  menu: Menu;
+  mode: "QR" | "KIOSK";
+  onKioskReset?: () => void;
+}) {
   const cart = useCart();
   const [activeCat, setActiveCat] = useState<string>("all");
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const isKiosk = mode === "KIOSK";
 
   const canOrder = business.is_open && business.accepting_orders;
   const [browseAnyway, setBrowseAnyway] = useState(false);
+
+  // Kiosk idle timeout: warn after inactivity, then auto-reset the session.
+  const idleOverlay = useIdleReset({
+    enabled: isKiosk && !checkoutOpen,
+    onReset: () => onKioskReset?.(),
+  });
 
   const visibleItems = useMemo(() => {
     if (activeCat === "all") return menu.items;
@@ -72,7 +105,7 @@ function MenuInner({ business, menu, mode }: { business: Business; menu: Menu; m
   }
 
   return (
-    <div style={{ paddingBottom: 90 }}>
+    <div style={{ paddingBottom: 90 }} className={isKiosk ? "kiosk-mode" : undefined}>
       {/* Hero */}
       <div style={hero}>
         <div style={heroOverlay} />
@@ -142,8 +175,18 @@ function MenuInner({ business, menu, mode }: { business: Business; menu: Menu; m
       )}
 
       {checkoutOpen && (
-        <CheckoutModal business={business} mode={mode} onClose={() => setCheckoutOpen(false)} />
+        <CheckoutModal
+          business={business}
+          mode={mode}
+          onClose={() => {
+            setCheckoutOpen(false);
+            // Kiosk: after the checkout flow closes (incl. "Order Again"), reset for the next customer.
+            if (isKiosk) onKioskReset?.();
+          }}
+        />
       )}
+
+      {idleOverlay}
 
       <style>{responsiveCss}</style>
     </div>
@@ -191,6 +234,95 @@ function Tab({ label, active, onClick }: { label: string; active: boolean; onCli
 const Center = ({ children }: { children: React.ReactNode }) => (
   <div style={{ display: "grid", placeItems: "center", minHeight: "60vh", padding: 24, textAlign: "center", color: "var(--color-text-muted)" }}>{children}</div>
 );
+
+const IDLE_WARN_MS = 45_000; // show "are you still here?" after 45s idle
+const IDLE_RESET_MS = 15_000; // then reset 15s later if no response
+
+/**
+ * Kiosk idle watchdog. After inactivity it shows an "Are you still ordering?"
+ * overlay, and if the customer doesn't respond it clears the session.
+ * Any pointer/key/touch activity resets the timer.
+ */
+function useIdleReset({ enabled, onReset }: { enabled: boolean; onReset: () => void }) {
+  const [warning, setWarning] = useState(false);
+  const warnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Keep a mutable reference so listeners don't need to re-bind.
+  const warnRef = useRef(warning);
+  warnRef.current = warning;
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const clearTimers = () => {
+      if (warnTimer.current) clearTimeout(warnTimer.current);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    };
+
+    const startCountdown = () => {
+      clearTimers();
+      warnTimer.current = setTimeout(() => {
+        setWarning(true);
+        resetTimer.current = setTimeout(() => {
+          setWarning(false);
+          onReset();
+        }, IDLE_RESET_MS);
+      }, IDLE_WARN_MS);
+    };
+
+    const onActivity = () => {
+      // Ignore activity while the warning is up — the overlay has its own buttons.
+      if (warnRef.current) return;
+      startCountdown();
+    };
+
+    const events = ["pointerdown", "keydown", "touchstart", "mousemove"];
+    events.forEach((e) => window.addEventListener(e, onActivity, { passive: true }));
+    startCountdown();
+
+    return () => {
+      clearTimers();
+      events.forEach((e) => window.removeEventListener(e, onActivity));
+    };
+  }, [enabled, onReset]);
+
+  // Fixed-position overlay returned to the caller for inline rendering.
+  return warning ? (
+    <div style={idleBackdrop}>
+      <div style={idleCard}>
+        <div style={{ fontSize: 44 }}>⏳</div>
+        <h2 style={{ margin: "10px 0 6px" }}>Are you still ordering?</h2>
+        <p style={{ color: "var(--color-text-muted)", marginTop: 0 }}>
+          We'll clear this order soon if there's no response.
+        </p>
+        <button
+          style={idleBtn}
+          onClick={() => {
+            setWarning(false);
+            if (resetTimer.current) clearTimeout(resetTimer.current);
+          }}
+        >
+          Yes, continue
+        </button>
+      </div>
+    </div>
+  ) : null;
+}
+
+/** Kiosk welcome screen shown before the menu, with a big Start Order button. */
+function KioskStartScreen({ business, onStart }: { business: Business; onStart: () => void }) {
+  return (
+    <div style={kioskStartWrap}>
+      <div style={{ ...logoCircle, width: 110, height: 110, fontSize: 52 }}>🍳</div>
+      <div style={{ fontSize: 18, color: "var(--color-text-muted)", marginTop: 24, letterSpacing: 1 }}>WELCOME TO</div>
+      <h1 style={{ fontSize: 44, margin: "6px 0 2px", textAlign: "center" }}>{business.name}</h1>
+      {business.description && <div style={{ color: "var(--color-text-muted)", fontSize: 18 }}>{business.description}</div>}
+      <button style={kioskStartBtn} onClick={onStart}>Start Order →</button>
+      <div style={{ color: "var(--color-text-muted)", fontSize: 14, marginTop: 20 }}>Tap anywhere to begin</div>
+    </div>
+  );
+}
 
 /** Full-screen "we're closed" state shown when a store is not open. */
 function ClosedScreen({ business, onBrowse }: { business: Business; onBrowse: () => void }) {
@@ -250,9 +382,38 @@ const stickyBar: React.CSSProperties = { position: "fixed", bottom: 0, left: 0, 
 const drawerBackdrop: React.CSSProperties = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 30, display: "flex", alignItems: "flex-end" };
 const drawerSheet: React.CSSProperties = { background: "var(--color-bg)", width: "100%", maxHeight: "85vh", overflow: "auto", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 12 };
 
+const kioskStartWrap: React.CSSProperties = {
+  minHeight: "100vh",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 32,
+  background: "linear-gradient(160deg,#fff,#fdf2f0)",
+};
+const kioskStartBtn: React.CSSProperties = {
+  marginTop: 40,
+  background: "var(--color-primary)",
+  color: "#fff",
+  border: "none",
+  borderRadius: 18,
+  padding: "22px 56px",
+  fontSize: 24,
+  fontWeight: 800,
+  cursor: "pointer",
+  boxShadow: "0 10px 30px rgba(220,38,38,0.3)",
+};
+const idleBackdrop: React.CSSProperties = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 70, display: "grid", placeItems: "center", padding: 24 };
+const idleCard: React.CSSProperties = { background: "var(--color-surface)", borderRadius: 20, padding: 36, textAlign: "center", maxWidth: 420 };
+const idleBtn: React.CSSProperties = { marginTop: 10, background: "var(--color-primary)", color: "#fff", border: "none", borderRadius: 14, padding: "16px 40px", fontSize: 18, fontWeight: 700, cursor: "pointer" };
+
 const responsiveCss = `
 @media (max-width: 860px) {
   .cart-desktop { display: none; }
   .cart-sticky { display: flex !important; }
 }
+/* Kiosk mode: larger touch targets for a tablet. */
+.kiosk-mode h1 { font-size: 34px; }
+.kiosk-mode button { font-size: 17px; }
+.kiosk-mode .cart-sticky { padding: 22px 20px; font-size: 18px; }
 `;

@@ -159,6 +159,24 @@ export const NEXT_ACTION_LABEL: Partial<Record<OrderStatus, string>> = {
   READY: "Complete",
 };
 
+/** Preset cancellation reasons shown to the vendor. */
+export const CANCEL_REASONS = [
+  "Item unavailable",
+  "Too busy",
+  "Customer requested",
+  "Payment issue",
+  "Other",
+] as const;
+
+/**
+ * Cancel an order with a reason. If the order was paid, this also flags a full
+ * refund (payment + order payment_status -> REFUNDED) via the cancel_order RPC.
+ */
+export async function cancelOrder(orderId: string, reason: string): Promise<void> {
+  const { error } = await supabase.rpc("cancel_order", { p_order_id: orderId, p_reason: reason });
+  if (error) throw error;
+}
+
 /** Advance (or set) an order's status. Owner-only via RLS. */
 export async function updateOrderStatus(orderId: string, status: OrderStatus): Promise<Order> {
   const { data, error } = await supabase

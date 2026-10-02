@@ -3,11 +3,14 @@ import { useNavigate } from "react-router-dom";
 import { VendorLayout } from "./VendorLayout";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/Button";
+import { ConnectionBanner } from "@/components/ConnectionBanner";
+import { NewOrderToast } from "@/components/NewOrderToast";
 import { useVendorBusiness } from "@/hooks/useVendorBusiness";
 import { useRealtimeOrders } from "@/hooks/useRealtimeOrders";
-import { getOrderItemsFor, updateOrderStatus, NEXT_STATUS, NEXT_ACTION_LABEL } from "@/lib/vendorApi";
+import { getOrderItemsFor, updateOrderStatus, cancelOrder, NEXT_STATUS, NEXT_ACTION_LABEL } from "@/lib/vendorApi";
 import { formatINR } from "@/lib/format";
 import type { Order, OrderItem, OrderStatus, OrderSource } from "@/lib/database.types";
+import { CancelOrderModal } from "./CancelOrderModal";
 
 const STATUS_FILTERS: (OrderStatus | "ALL" | "ACTIVE")[] = [
   "ACTIVE", "ALL", "NEW", "ACCEPTED", "PREPARING", "READY", "COMPLETED", "CANCELLED",
@@ -16,11 +19,14 @@ const STATUS_FILTERS: (OrderStatus | "ALL" | "ACTIVE")[] = [
 export function OrdersPage() {
   const navigate = useNavigate();
   const { business, loading } = useVendorBusiness();
-  const { orders } = useRealtimeOrders(business?.id, 50);
+  const { orders, connected, latestNew, newOrderCount, acknowledge } = useRealtimeOrders(business?.id, 100, true);
   const [itemsByOrder, setItemsByOrder] = useState<Record<string, OrderItem[]>>({});
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]>("ACTIVE");
   const [sourceFilter, setSourceFilter] = useState<OrderSource | "ALL">("ALL");
+  const [search, setSearch] = useState("");
+  const [dateFilter, setDateFilter] = useState(""); // yyyy-mm-dd
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState<Order | null>(null);
 
   useEffect(() => {
     if (!loading && !business) navigate("/vendor/onboarding", { replace: true });
@@ -33,15 +39,21 @@ export function OrdersPage() {
   }, [orders]);
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return orders.filter((o) => {
       const statusOk =
         statusFilter === "ALL" ? true :
         statusFilter === "ACTIVE" ? ["NEW", "ACCEPTED", "PREPARING", "READY"].includes(o.status) :
         o.status === statusFilter;
       const sourceOk = sourceFilter === "ALL" ? true : o.source === sourceFilter;
-      return statusOk && sourceOk;
+      const dateOk = !dateFilter ? true : new Date(o.placed_at).toISOString().slice(0, 10) === dateFilter;
+      const searchOk =
+        !q ? true :
+        String(o.order_number ?? "").includes(q) ||
+        (o.customer_name ?? "").toLowerCase().includes(q);
+      return statusOk && sourceOk && dateOk && searchOk;
     });
-  }, [orders, statusFilter, sourceFilter]);
+  }, [orders, statusFilter, sourceFilter, dateFilter, search]);
 
   const activeCount = orders.filter((o) => ["NEW", "ACCEPTED", "PREPARING", "READY"].includes(o.status)).length;
 
@@ -56,11 +68,13 @@ export function OrdersPage() {
     }
   }
 
-  async function cancel(order: Order) {
-    if (!confirm(`Cancel order #${order.order_number}?`)) return;
-    setBusyId(order.id);
+  async function confirmCancel(reason: string) {
+    if (!cancelling) return;
+    const id = cancelling.id;
+    setBusyId(id);
     try {
-      await updateOrderStatus(order.id, "CANCELLED");
+      await cancelOrder(id, reason);
+      setCancelling(null);
     } finally {
       setBusyId(null);
     }
@@ -70,7 +84,37 @@ export function OrdersPage() {
 
   return (
     <VendorLayout businessName={business.name} ordersBadge={activeCount}>
+      <ConnectionBanner connected={connected} />
+
+      {latestNew && (
+        <NewOrderToast
+          order={latestNew}
+          count={newOrderCount}
+          onView={acknowledge}
+          onDismiss={acknowledge}
+        />
+      )}
+
       <h1 style={{ marginTop: 0 }}>Orders</h1>
+
+      {/* Search + date */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <input
+          style={searchInput}
+          placeholder="Search by order # or customer name…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <input
+          type="date"
+          style={{ ...searchInput, maxWidth: 170 }}
+          value={dateFilter}
+          onChange={(e) => setDateFilter(e.target.value)}
+        />
+        {(search || dateFilter) && (
+          <Button variant="secondary" onClick={() => { setSearch(""); setDateFilter(""); }}>Clear</Button>
+        )}
+      </div>
 
       {/* Filters */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
@@ -99,10 +143,19 @@ export function OrdersPage() {
               items={itemsByOrder[o.id] ?? []}
               busy={busyId === o.id}
               onAdvance={() => advance(o)}
-              onCancel={() => cancel(o)}
+              onCancel={() => setCancelling(o)}
             />
           ))}
         </div>
+      )}
+
+      {cancelling && (
+        <CancelOrderModal
+          order={cancelling}
+          busy={busyId === cancelling.id}
+          onConfirm={confirmCancel}
+          onClose={() => setCancelling(null)}
+        />
       )}
     </VendorLayout>
   );
@@ -116,6 +169,7 @@ function OrderCard({
   const nextLabel = NEXT_ACTION_LABEL[order.status];
   const terminal = order.status === "COMPLETED" || order.status === "CANCELLED";
   const time = new Date(order.placed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const paid = order.payment_status === "SUCCESS";
 
   return (
     <div style={card}>
@@ -124,7 +178,7 @@ function OrderCard({
         <StatusPill status={order.status} />
       </div>
       <div style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "2px 0 10px" }}>
-        {time} · {order.source} · {order.customer_name || "Guest"}
+        {time} · {order.source} · {order.customer_name || "Guest"} · <PaymentTag status={order.payment_status} />
       </div>
 
       <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: 8 }}>
@@ -140,6 +194,13 @@ function OrderCard({
         </div>
       </div>
 
+      {order.status === "CANCELLED" && order.cancel_reason && (
+        <div style={{ marginTop: 10, fontSize: 12, color: "#b42318" }}>
+          Cancelled: {order.cancel_reason}
+          {order.payment_status === "REFUNDED" ? " · Refund issued" : ""}
+        </div>
+      )}
+
       {!terminal && (
         <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
           {nextLabel && (
@@ -147,11 +208,26 @@ function OrderCard({
               {busy ? "…" : nextLabel}
             </Button>
           )}
-          <Button variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>
+            {paid ? "Cancel & Refund" : "Cancel"}
+          </Button>
         </div>
       )}
     </div>
   );
+}
+
+function PaymentTag({ status }: { status: Order["payment_status"] }) {
+  const map: Record<string, { label: string; color: string }> = {
+    SUCCESS: { label: "Paid", color: "var(--color-positive)" },
+    PENDING: { label: "Pending", color: "#b45309" },
+    INITIATED: { label: "Unpaid", color: "var(--color-text-muted)" },
+    FAILED: { label: "Payment failed", color: "#b42318" },
+    CANCELLED: { label: "Payment cancelled", color: "var(--color-text-muted)" },
+    REFUNDED: { label: "Refunded", color: "#2563eb" },
+  };
+  const m = map[status] ?? { label: status, color: "var(--color-text-muted)" };
+  return <span style={{ color: m.color, fontWeight: 600 }}>{m.label}</span>;
 }
 
 function Chip({ active, onClick, children, small }: { active: boolean; onClick: () => void; children: React.ReactNode; small?: boolean }) {
@@ -166,6 +242,7 @@ function Chip({ active, onClick, children, small }: { active: boolean; onClick: 
         color: active ? "#fff" : "var(--color-text-muted)",
         fontWeight: 600,
         fontSize: 13,
+        cursor: "pointer",
       }}
     >
       {children}
@@ -181,4 +258,12 @@ const card: React.CSSProperties = {
   borderRadius: 14,
   padding: 16,
   boxShadow: "var(--shadow-card)",
+};
+const searchInput: React.CSSProperties = {
+  flex: 1,
+  minWidth: 220,
+  padding: "9px 12px",
+  border: "1px solid var(--color-border)",
+  borderRadius: 10,
+  fontSize: 14,
 };
