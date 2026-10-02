@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { useVendorBusiness } from "@/hooks/useVendorBusiness";
 import { useRealtimeOrders } from "@/hooks/useRealtimeOrders";
 import { getDashboardData, updateBusiness, type DashboardData } from "@/lib/vendorApi";
-import { formatINR, formatHours } from "@/lib/format";
+import { formatINR, formatHours, publicPath } from "@/lib/format";
 import { ComboChart } from "@/components/charts/ComboChart";
 import { DonutChart } from "@/components/charts/DonutChart";
 import { NewOrderToast } from "@/components/NewOrderToast";
@@ -94,6 +94,22 @@ export function DashboardPage() {
             {accepting ? "Pause Orders" : "Resume Orders"}
           </Button>
         </div>
+      </div>
+
+      {/* Per-vendor quick launchers (use THIS vendor's slug — never a hardcoded one) */}
+      <div style={launcherRow}>
+        <Button variant="primary" onClick={() => window.open(`/kiosk/${publicPath(business)}`, "_blank", "noopener")}>
+          🖥️ Open Customer POS
+        </Button>
+        <Button variant="secondary" onClick={() => window.open(`/order/${publicPath(business)}`, "_blank", "noopener")}>
+          📱 View Menu
+        </Button>
+        <Button variant="secondary" onClick={() => navigate("/vendor/qr")}>
+          🔳 View QR
+        </Button>
+        <Button variant="secondary" onClick={() => navigate("/vendor/orders")}>
+          📋 Manage Orders
+        </Button>
       </div>
 
       {/* Active work summary (numbers only — manage orders on the Orders page) */}
@@ -335,6 +351,7 @@ const cardBase: React.CSSProperties = {
   boxShadow: "var(--shadow-card)",
 };
 const kpiGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginTop: 20 };
+const launcherRow: React.CSSProperties = { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 18 };
 const activeStrip: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginTop: 18,
   background: "var(--color-surface)", border: "1px solid var(--color-border)",

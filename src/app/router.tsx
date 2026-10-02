@@ -3,9 +3,12 @@ import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
 import { RequireAuth } from "./RequireAuth";
 import { VendorBusinessProvider } from "@/hooks/useVendorBusiness";
 import { HealthCheck } from "@/components/HealthCheck";
+import { LandingPage } from "@/features/LandingPage";
 import { MenuPage } from "@/features/customer/MenuPage";
 import { TrackingPage } from "@/features/customer/TrackingPage";
+import { TokenTrackingPage } from "@/features/customer/TokenTrackingPage";
 import { LoginPage } from "@/features/vendor/LoginPage";
+import { ResetPasswordPage } from "@/features/vendor/ResetPasswordPage";
 
 // Vendor pages are lazy-loaded so the customer bundle stays small.
 const OnboardingWizard = lazy(() => import("@/features/vendor/OnboardingWizard").then((m) => ({ default: m.OnboardingWizard })));
@@ -38,16 +41,19 @@ function VendorShell() {
 }
 
 export const router = createBrowserRouter([
-  // --- Dev / smoke test ---
-  { path: "/", element: <HealthCheck /> },
+  // --- Public landing + dev health check ---
+  { path: "/", element: <LandingPage /> },
+  { path: "/health", element: <HealthCheck /> },
 
   // --- Public customer (no auth) ---
   { path: "/order/:slug", element: <MenuPage mode="QR" /> },
   { path: "/order/:slug/track/:orderNo", element: <TrackingPage /> },
+  { path: "/track/:token", element: <TokenTrackingPage /> },
   { path: "/kiosk/:slug", element: <MenuPage mode="KIOSK" /> },
 
   // --- Vendor auth ---
   { path: "/vendor/login", element: <LoginPage /> },
+  { path: "/vendor/reset-password", element: <ResetPasswordPage /> },
 
   // --- Vendor app (auth + shared business provider) ---
   {

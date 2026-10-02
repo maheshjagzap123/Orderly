@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { VendorLayout } from "./VendorLayout";
 import { useVendorBusiness } from "@/hooks/useVendorBusiness";
-import { getReport, type ReportData } from "@/lib/vendorApi";
+import { getReport, getReportOrders, type ReportData } from "@/lib/vendorApi";
 import { formatINR } from "@/lib/format";
+import { toCsv, downloadCsv } from "@/lib/csv";
+import { Button } from "@/components/ui/Button";
 
 const PERIODS: { label: string; days: number }[] = [
   { label: "Today", days: 1 },
@@ -18,6 +20,7 @@ export function ReportsPage() {
   const [periodIdx, setPeriodIdx] = useState(2); // Last 7 days
   const [report, setReport] = useState<ReportData | null>(null);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (!loading && !business) navigate("/vendor/onboarding", { replace: true });
@@ -36,16 +39,47 @@ export function ReportsPage() {
     getReport(business.id, since).then(setReport).finally(() => setBusy(false));
   }, [business, since]);
 
+  async function exportCsv() {
+    if (!business || exporting) return;
+    setExporting(true);
+    try {
+      const rows = await getReportOrders(business.id, since);
+      const headers = ["Order Number", "Date", "Time", "Customer", "Source", "Items", "Subtotal", "Tax", "Total", "Status"];
+      const data = rows.map((r) => {
+        const dt = new Date(r.placedAt);
+        return [
+          r.orderNumber ?? "",
+          dt.toLocaleDateString(),
+          dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          r.customerName,
+          r.source,
+          r.items,
+          r.subtotal.toFixed(2),
+          r.tax.toFixed(2),
+          r.total.toFixed(2),
+          r.status,
+        ];
+      });
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadCsv(`orderly-report-${stamp}.csv`, toCsv(headers, data));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (loading || !business) return <div style={{ padding: 32 }}>Loading…</div>;
 
   return (
     <VendorLayout businessName={business.name}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <h1 style={{ margin: 0 }}>Reports</h1>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {PERIODS.map((p, i) => (
             <button key={p.label} onClick={() => setPeriodIdx(i)} style={chip(i === periodIdx)}>{p.label}</button>
           ))}
+          <Button variant="secondary" onClick={exportCsv} disabled={exporting || !report || report.ordersTotal + report.cancelled === 0}>
+            {exporting ? "Exporting…" : "⬇ Export CSV"}
+          </Button>
         </div>
       </div>
 
@@ -90,9 +124,6 @@ export function ReportsPage() {
             </div>
           </div>
 
-          <p style={{ color: "var(--color-text-muted)", fontSize: 12, marginTop: 16 }}>
-            Exports (CSV / Excel / PDF) coming in a later phase.
-          </p>
         </>
       )}
     </VendorLayout>

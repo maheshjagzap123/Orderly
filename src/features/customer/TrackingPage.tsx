@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { getBusinessBySlug } from "@/lib/publicApi";
+import { publicPath } from "@/lib/format";
 import { OrderTracker } from "./OrderTracker";
 import type { Business } from "@/lib/database.types";
 
@@ -27,7 +28,7 @@ export function TrackingPage() {
         <OrderTracker
           business={business}
           orderNumber={orderNumber}
-          onClose={() => (window.location.href = `/order/${business.slug}`)}
+          onClose={() => (window.location.href = `/order/${publicPath(business)}`)}
         />
       </div>
     </div>

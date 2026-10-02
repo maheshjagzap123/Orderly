@@ -35,6 +35,7 @@ export type Business = {
   owner_id: string;
   name: string;
   slug: string;
+  public_code: string;
   description: string | null;
   category: string;
   logo_url: string | null;
@@ -96,6 +97,7 @@ export type Order = {
   confirmed_at: string | null;
   cancel_reason: string | null;
   cancelled_at: string | null;
+  track_token: string;
   created_at: string;
   updated_at: string;
 }
@@ -158,6 +160,7 @@ export interface Database {
           | "onboarding_complete"
           | "order_seq"
           | "category"
+          | "public_code"
         >;
         Update: Partial<Business>;
         Relationships: [];
@@ -205,6 +208,7 @@ export interface Database {
           | "confirmed_at"
           | "cancel_reason"
           | "cancelled_at"
+          | "track_token"
         >;
         Update: Partial<Order>;
         Relationships: [];
@@ -239,6 +243,56 @@ export interface Database {
       cancel_order: {
         Args: { p_order_id: string; p_reason: string };
         Returns: undefined;
+      };
+      get_order_tracking: {
+        Args: { p_token: string };
+        Returns: {
+          order_number: number | null;
+          status: OrderStatus;
+          payment_status: PaymentStatus;
+          customer_name: string | null;
+          subtotal: number;
+          tax_amount: number;
+          total: number;
+          placed_at: string;
+          cancel_reason: string | null;
+          business_id: string;
+          business_name: string;
+          business_slug: string;
+          business_public_code: string | null;
+          prep_time_min: number | null;
+          prep_time_max: number | null;
+        }[];
+      };
+      get_order_items_tracking: {
+        Args: { p_token: string };
+        Returns: {
+          item_name: string;
+          unit_price: number;
+          quantity: number;
+          line_total: number;
+        }[];
+      };
+      get_order_confirmation: {
+        Args: { p_order_id: string };
+        Returns: {
+          order_number: number | null;
+          payment_status: PaymentStatus;
+          track_token: string;
+        }[];
+      };
+      place_order_dev: {
+        Args: {
+          p_business_id: string;
+          p_source: OrderSource;
+          p_customer_name: string | null;
+          p_lines: { item_id: string; quantity: number }[];
+        };
+        Returns: {
+          order_number: number | null;
+          track_token: string;
+          order_id: string;
+        }[];
       };
     };
     Enums: {

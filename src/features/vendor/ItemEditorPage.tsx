@@ -4,8 +4,9 @@ import { VendorLayout } from "./VendorLayout";
 import { Button } from "@/components/ui/Button";
 import { useVendorBusiness } from "@/hooks/useVendorBusiness";
 import {
-  getCategories, getItemById, createItem, updateItem, uploadMenuImage,
+  getCategories, getItemById, createItem, updateItem, uploadMenuImage, validateMenuImage,
 } from "@/lib/vendorApi";
+import { friendlyError } from "@/lib/errors";
 import type { Category, ItemBadge } from "@/lib/database.types";
 
 const BADGES: (ItemBadge | "")[] = ["", "POPULAR", "BESTSELLER", "NEW"];
@@ -20,6 +21,7 @@ export function ItemEditorPage() {
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
   const [price, setPrice] = useState("");
+  const [prepTime, setPrepTime] = useState("");
   const [description, setDescription] = useState("");
   const [badge, setBadge] = useState<ItemBadge | "">("");
   const [available, setAvailable] = useState(true);
@@ -41,6 +43,7 @@ export function ItemEditorPage() {
         setName(item.name);
         setCategoryId(item.category_id ?? "");
         setPrice(String(item.price));
+        setPrepTime(item.prep_time_min != null ? String(item.prep_time_min) : "");
         setDescription(item.description ?? "");
         setBadge(item.badge ?? "");
         setAvailable(item.is_available);
@@ -52,6 +55,12 @@ export function ItemEditorPage() {
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !business) return;
+    const invalid = validateMenuImage(file);
+    if (invalid) {
+      setError(invalid);
+      e.target.value = ""; // reset the picker so the same file can be reselected
+      return;
+    }
     setUploading(true);
     setError(null);
     try {
@@ -70,13 +79,27 @@ export function ItemEditorPage() {
       setError("Name and price are required.");
       return;
     }
+    const priceNum = Number(price);
+    if (Number.isNaN(priceNum) || priceNum < 0) {
+      setError("Price must be a valid non-negative number.");
+      return;
+    }
+    let prepTimeNum: number | null = null;
+    if (prepTime.trim() !== "") {
+      prepTimeNum = Number(prepTime);
+      if (!Number.isInteger(prepTimeNum) || prepTimeNum < 0) {
+        setError("Preparation time must be a whole number of minutes (0 or more).");
+        return;
+      }
+    }
     setSaving(true);
     setError(null);
     try {
       const payload = {
         name: name.trim(),
         category_id: categoryId || null,
-        price: Number(price),
+        price: priceNum,
+        prep_time_min: prepTimeNum,
         description: description.trim() || null,
         image_url: imageUrl,
         is_available: available,
@@ -86,7 +109,8 @@ export function ItemEditorPage() {
       else await updateItem(id!, payload);
       navigate("/vendor/menu");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save");
+      console.error("save item failed:", err);
+      setError(friendlyError(err, "Could not save the item."));
     } finally {
       setSaving(false);
     }
@@ -117,7 +141,11 @@ export function ItemEditorPage() {
           </select>
         </Field>
 
-        <Field label="Price (₹) *"><input style={input} type="number" value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
+        <Field label="Price (₹) *"><input style={input} type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
+
+        <Field label="Preparation time (minutes)">
+          <input style={input} type="number" min="0" step="1" placeholder="e.g. 10" value={prepTime} onChange={(e) => setPrepTime(e.target.value)} />
+        </Field>
 
         <Field label="Description">
           <textarea style={{ ...input, minHeight: 70 }} value={description} onChange={(e) => setDescription(e.target.value)} />

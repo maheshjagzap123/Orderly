@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { VendorLayout } from "./VendorLayout";
 import { Button } from "@/components/ui/Button";
 import { useVendorBusiness } from "@/hooks/useVendorBusiness";
+import { publicPath } from "@/lib/format";
 
 export function QrPage() {
   const navigate = useNavigate();
@@ -15,7 +16,7 @@ export function QrPage() {
     if (!loading && !business) navigate("/vendor/onboarding", { replace: true });
   }, [loading, business, navigate]);
 
-  const orderingUrl = business ? `${window.location.origin}/order/${business.slug}` : "";
+  const orderingUrl = business ? `${window.location.origin}/order/${publicPath(business)}` : "";
 
   useEffect(() => {
     if (business && canvasRef.current) {

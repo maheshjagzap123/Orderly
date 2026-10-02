@@ -49,11 +49,14 @@ export function HealthCheck() {
 
       <h3 style={{ marginTop: 28 }}>Routes</h3>
       <ul style={{ lineHeight: 1.9 }}>
-        <li><a href="/order/mahesh-paratha">/order/:slug</a> — public menu</li>
-        <li><a href="/kiosk/mahesh-paratha">/kiosk/:slug</a> — kiosk</li>
+        <li><code>/order/:slug</code> — public menu (replace :slug with a real vendor slug)</li>
+        <li><code>/kiosk/:slug</code> — kiosk (per-vendor; launched from the vendor dashboard)</li>
         <li><a href="/vendor/login">/vendor/login</a> — vendor login</li>
         <li><a href="/vendor">/vendor</a> — dashboard (guarded)</li>
       </ul>
+      <p style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+        This page is a developer tool. The public homepage is at <a href="/">/</a>.
+      </p>
     </div>
   );
 }

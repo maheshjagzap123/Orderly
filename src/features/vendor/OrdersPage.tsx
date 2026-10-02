@@ -7,7 +7,7 @@ import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { NewOrderToast } from "@/components/NewOrderToast";
 import { useVendorBusiness } from "@/hooks/useVendorBusiness";
 import { useRealtimeOrders, SOUND_PREF_KEY, soundEnabled, playChime, VOICE_PREF_KEY, voiceEnabled, speakOrder, CHIME_MS, unlockAudio } from "@/hooks/useRealtimeOrders";
-import { getOrderItemsFor, updateOrderStatus, cancelOrder, type OrderItemWithImage } from "@/lib/vendorApi";
+import { getOrderItemsFor, updateOrderStatus, cancelOrder, getCompletedOrders, type OrderItemWithImage } from "@/lib/vendorApi";
 import { formatINR } from "@/lib/format";
 import type { Order, OrderSource } from "@/lib/database.types";
 import { CancelOrderModal } from "./CancelOrderModal";
@@ -19,10 +19,17 @@ const PAGE_SIZE = 10;
 export function OrdersPage() {
   const navigate = useNavigate();
   const { business, loading } = useVendorBusiness();
-  const { orders, connected, latestNew, newOrderCount, acknowledge } = useRealtimeOrders(business?.id, 200, true);
+  // Live queue tracks recent orders (active + a few just-completed) for realtime
+  // + the new-order chime. Completed history is fetched separately + paginated.
+  const { orders, connected, latestNew, newOrderCount, acknowledge } = useRealtimeOrders(business?.id, 50, true);
   const [itemsByOrder, setItemsByOrder] = useState<Record<string, OrderItemWithImage[]>>({});
+  const [completedRows, setCompletedRows] = useState<Order[]>([]);
+  const [completedTotal, setCompletedTotal] = useState(0);
+  const [completedLoading, setCompletedLoading] = useState(false);
   const [tab, setTab] = useState<"active" | "completed">("active");
   const [sourceFilter, setSourceFilter] = useState<OrderSource | "ALL">("ALL");
+  const [sortDir, setSortDir] = useState<"oldest" | "newest">("oldest");
+  const [dateRange, setDateRange] = useState<"today" | "week" | "month" | "all">("today");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [sound, setSound] = useState(soundEnabled());
@@ -51,9 +58,11 @@ export function OrdersPage() {
   }, []);
 
   useEffect(() => {
-    const ids = orders.map((o) => o.id);
-    if (ids.length) getOrderItemsFor(ids).then(setItemsByOrder).catch(() => {});
-  }, [orders]);
+    // Fetch items for the orders actually on screen: the live queue + the current
+    // completed page. Merge so we don't refetch everything on every realtime tick.
+    const ids = [...new Set([...orders.map((o) => o.id), ...completedRows.map((o) => o.id)])];
+    if (ids.length) getOrderItemsFor(ids).then((m) => setItemsByOrder((prev) => ({ ...prev, ...m }))).catch(() => {});
+  }, [orders, completedRows]);
 
   // Keep the open drawer's order in sync with realtime updates.
   useEffect(() => {
@@ -107,27 +116,52 @@ export function OrdersPage() {
       if (o.status === "NEW") map.NEW.push(o);
       else if (o.status === "ACCEPTED" || o.status === "PREPARING" || o.status === "READY") map.PREPARING.push(o);
     }
-    map.PREPARING.sort((a, b) => new Date(a.placed_at).getTime() - new Date(b.placed_at).getTime());
-    map.NEW.sort((a, b) => new Date(a.placed_at).getTime() - new Date(b.placed_at).getTime());
+    const cmp = (a: Order, b: Order) => {
+      const diff = new Date(a.placed_at).getTime() - new Date(b.placed_at).getTime();
+      return sortDir === "oldest" ? diff : -diff;
+    };
+    map.PREPARING.sort(cmp);
+    map.NEW.sort(cmp);
     return map;
-  }, [orders, sourceFilter]);
+  }, [orders, sourceFilter, sortDir]);
 
   const activeCount = grouped.PREPARING.length + grouped.NEW.length;
 
-  const completedAll = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return orders
-      .filter((o) => (o.status === "COMPLETED" || o.status === "CANCELLED") && bySource(o))
-      .filter((o) =>
-        !q ? true :
-        String(o.order_number ?? "").includes(q) || (o.customer_name ?? "").toLowerCase().includes(q)
-      )
-      .sort((a, b) => new Date(b.placed_at).getTime() - new Date(a.placed_at).getTime());
-  }, [orders, sourceFilter, search]);
+  // Completed history is fetched server-side + paginated (scalable; no 200-row
+  // client download). Refetch when the completed tab is open and its filters change.
+  const dateRangeToSince = (r: typeof dateRange): Date | null => {
+    const ms = rangeCutoff(r);
+    return ms == null ? null : new Date(ms);
+  };
+  useEffect(() => {
+    if (tab !== "completed" || !business) return;
+    let active = true;
+    setCompletedLoading(true);
+    getCompletedOrders(business.id, {
+      page,
+      pageSize: PAGE_SIZE,
+      since: dateRangeToSince(dateRange),
+      search,
+      source: sourceFilter,
+    })
+      .then((res) => {
+        if (!active) return;
+        setCompletedRows(res.rows);
+        setCompletedTotal(res.total);
+      })
+      .finally(() => active && setCompletedLoading(false));
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, business?.id, page, dateRange, search, sourceFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(completedAll.length / PAGE_SIZE));
-  const completed = completedAll.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(completedTotal / PAGE_SIZE));
+  const completed = completedRows;
+  const completedRevenue = useMemo(
+    () => completedRows.filter((o) => o.payment_status === "SUCCESS").reduce((s, o) => s + Number(o.total), 0),
+    [completedRows]
+  );
   useEffect(() => { if (page > totalPages) setPage(1); }, [page, totalPages]);
+  useEffect(() => { setPage(1); }, [dateRange, search, sourceFilter]);
 
   async function advance(order: Order) {
     const next = vendorNextStatus(order.status);
@@ -177,9 +211,13 @@ export function OrdersPage() {
             {fullscreen ? "✕ Exit Full Screen" : "⛶ Full Screen"}
           </button>
           {tab === "active" && (
-            <span style={{ ...pillBtn(false, false), cursor: "default" }} title="Orders are grouped by work priority, oldest first within each group">
-              ↕ Oldest First
-            </span>
+            <button
+              onClick={() => setSortDir((d) => (d === "oldest" ? "newest" : "oldest"))}
+              style={pillBtn(false, false)}
+              title="Toggle sort order within each group"
+            >
+              ↕ {sortDir === "oldest" ? "Oldest First" : "Newest First"}
+            </button>
           )}
         </div>
       </div>
@@ -193,14 +231,25 @@ export function OrdersPage() {
       </div>
 
       {/* Source filter */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "16px 0" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "16px 0 0" }}>
         {(["ALL", "QR", "KIOSK"] as const).map((s) => (
           <Chip key={s} active={sourceFilter === s} onClick={() => setSourceFilter(s)}>{s === "ALL" ? "All sources" : s}</Chip>
         ))}
-        {tab === "completed" && (
-          <input style={searchInput} placeholder="Search completed orders…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
-        )}
       </div>
+
+      {/* Completed-only: date range + search + daily total */}
+      {tab === "completed" && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "12px 0 0" }}>
+          {DATE_RANGES.map((r) => (
+            <Chip key={r.key} active={dateRange === r.key} onClick={() => setDateRange(r.key)}>{r.label}</Chip>
+          ))}
+          <input style={searchInput} placeholder="Search by order # or name…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>
+            {completedTotal} order{completedTotal === 1 ? "" : "s"} · <strong style={{ color: "var(--color-text)" }}>{formatINR(completedRevenue)}</strong> <span style={{ fontWeight: 400 }}>(this page)</span>
+          </span>
+        </div>
+      )}
+      <div style={{ height: 16 }} />
 
       {tab === "active" ? (
         activeCount === 0 ? (
@@ -250,10 +299,12 @@ export function OrdersPage() {
           </div>
         )
       ) : (
-        completedAll.length === 0 ? (
+        completedLoading && completed.length === 0 ? (
+          <div style={{ padding: 32, color: "var(--color-text-muted)" }}>Loading…</div>
+        ) : completedTotal === 0 ? (
           <EmptyState icon="📋" title="No completed orders yet" sub="Completed orders will appear here." />
         ) : (
-          <CompletedTable rows={completed} itemsByOrder={itemsByOrder} onView={setDetail} page={page} totalPages={totalPages} total={completedAll.length} onPage={setPage} />
+          <CompletedTable rows={completed} itemsByOrder={itemsByOrder} onView={setDetail} page={page} totalPages={totalPages} total={completedTotal} onPage={setPage} />
         )
       )}
 
@@ -419,6 +470,29 @@ function EmptyState({ icon, title, sub }: { icon: string; title: string; sub: st
     </div>
   );
 }
+
+/** Return the epoch-ms cutoff for a completed-orders date range, or null for "all". */
+function rangeCutoff(range: "today" | "week" | "month" | "all"): number | null {
+  if (range === "all") return null;
+  const d = new Date();
+  if (range === "today") {
+    d.setHours(0, 0, 0, 0);
+  } else if (range === "week") {
+    d.setDate(d.getDate() - 6);
+    d.setHours(0, 0, 0, 0);
+  } else {
+    d.setDate(d.getDate() - 29);
+    d.setHours(0, 0, 0, 0);
+  }
+  return d.getTime();
+}
+
+const DATE_RANGES: { key: "today" | "week" | "month" | "all"; label: string }[] = [
+  { key: "today", label: "Today" },
+  { key: "week", label: "This Week" },
+  { key: "month", label: "This Month" },
+  { key: "all", label: "All" },
+];
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();

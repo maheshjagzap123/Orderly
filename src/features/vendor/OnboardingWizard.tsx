@@ -3,6 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
 import { slugify } from "@/lib/format";
 import { createBusiness, getMyBusiness } from "@/lib/vendorApi";
+import { signOut } from "@/lib/auth";
+import { useVendorBusiness } from "@/hooks/useVendorBusiness";
+import { validateBusinessName, validateRequired, validatePincode, validateTaxPercent } from "@/lib/validation";
 
 interface FormState {
   name: string;
@@ -34,18 +37,21 @@ const initial: FormState = {
 
 export function OnboardingWizard() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(1);
+  const { setBusiness } = useVendorBusiness();
   const [form, setForm] = useState<FormState>(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [geoMsg, setGeoMsg] = useState<string | null>(null);
 
-  // If already onboarded, skip to dashboard.
+  // If already onboarded, skip straight to the dashboard.
   useEffect(() => {
     getMyBusiness().then((b) => {
-      if (b?.onboarding_complete) navigate("/vendor", { replace: true });
+      if (b?.onboarding_complete) {
+        setBusiness(b);
+        navigate("/vendor", { replace: true });
+      }
     });
-  }, [navigate]);
+  }, [navigate, setBusiness]);
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -66,12 +72,33 @@ export function OnboardingWizard() {
     );
   }
 
+  /** Leave onboarding: sign out, then go to the login page. */
+  async function backToLogin() {
+    await signOut();
+    setBusiness(null);
+    navigate("/vendor/login", { replace: true });
+  }
+
+  function validate(): string | null {
+    return (
+      validateBusinessName(form.name) ||
+      validateRequired(form.address, "Address") ||
+      validatePincode(form.pincode) ||
+      validateTaxPercent(form.tax_percent)
+    );
+  }
+
   async function finish() {
+    const v = validate();
+    if (v) {
+      setError(v);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const slug = slugify(form.name) || `stall-${Date.now()}`;
-      await createBusiness({
+      const created = await createBusiness({
         name: form.name.trim(),
         slug,
         description: form.description.trim() || null,
@@ -85,128 +112,102 @@ export function OnboardingWizard() {
         prep_time_max: form.prep_time_max ? Number(form.prep_time_max) : null,
         tax_percent: form.tax_percent ? Number(form.tax_percent) : 0,
       });
+      setBusiness(created);
       navigate("/vendor", { replace: true });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not complete setup");
+      console.error("createBusiness failed:", e);
+      const raw = e as { message?: string; details?: string; code?: string };
+      const msg = raw?.message || raw?.details || "Could not complete setup";
+      if (raw?.code === "23505" || /duplicate|unique/i.test(msg)) {
+        setError("A shop with this name already exists for your account. Try a different name, or go to your dashboard.");
+      } else {
+        setError(msg);
+      }
     } finally {
       setBusy(false);
     }
   }
 
-  const canNext1 = form.name.trim().length > 0;
-  const canNext2 = form.address.trim().length > 0;
-
   return (
     <div style={wrap}>
       <div style={card}>
-        <Steps step={step} />
+        {/* Header with a way back to login */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <button type="button" style={linkBtn} onClick={backToLogin}>← Back to login</button>
+          <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Step 1 of 1</span>
+        </div>
 
-        {step === 1 && (
-          <section>
-            <h2 style={h2}>Business details</h2>
-            <Field label="Stall / business name *">
-              <input style={input} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Mahesh Paratha Center" />
-            </Field>
-            <Field label="Short tagline / description">
-              <input style={input} value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Fresh • Tasty • Desi Flavour" />
-            </Field>
-            {form.name && (
-              <p style={hint}>Public link will be: <code>/order/{slugify(form.name)}</code></p>
-            )}
-            <Nav>
-              <span />
-              <Button disabled={!canNext1} onClick={() => setStep(2)}>Next</Button>
-            </Nav>
-          </section>
+        <h1 style={{ margin: "4px 0 2px", fontSize: 24 }}>Set up your shop</h1>
+        <p style={{ color: "var(--color-text-muted)", margin: "0 0 20px", fontSize: 14 }}>
+          Fill in your details below. You can add menu items from the dashboard afterwards.
+        </p>
+
+        {/* ---- Business ---- */}
+        <SectionTitle>Business</SectionTitle>
+        <Field label="Stall / business name *">
+          <input style={input} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Mahesh Paratha Center" />
+        </Field>
+        <Field label="Short tagline / description">
+          <input style={input} value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Fresh • Tasty • Desi Flavour" />
+        </Field>
+        {form.name && (
+          <p style={hint}>
+            Public link: <code>/order/{slugify(form.name) || "your-shop"}-xxxxxx</code>{" "}
+            <span>— the extra code keeps it private so only people with your QR can find it.</span>
+          </p>
         )}
 
-        {step === 2 && (
-          <section>
-            <h2 style={h2}>Address & location</h2>
-            <Field label="Address *">
-              <input style={input} value={form.address} onChange={(e) => set("address", e.target.value)} placeholder="Sector 17, Chandigarh" />
-            </Field>
-            <Field label="Pincode">
-              <input style={input} value={form.pincode} onChange={(e) => set("pincode", e.target.value)} placeholder="160017" />
-            </Field>
-            <Button variant="secondary" onClick={useMyLocation} type="button">📍 Use my location</Button>
-            {geoMsg && <p style={hint}>{geoMsg}{form.latitude ? ` (${form.latitude.toFixed(4)}, ${form.longitude?.toFixed(4)})` : ""}</p>}
-            <Nav>
-              <Button variant="secondary" onClick={() => setStep(1)}>Back</Button>
-              <Button disabled={!canNext2} onClick={() => setStep(3)}>Next</Button>
-            </Nav>
-          </section>
-        )}
+        {/* ---- Location ---- */}
+        <SectionTitle>Location</SectionTitle>
+        <div style={rowFields}>
+          <Field label="Address *">
+            <input style={input} value={form.address} onChange={(e) => set("address", e.target.value)} placeholder="Sector 17, Chandigarh" />
+          </Field>
+          <Field label="Pincode">
+            <input style={input} value={form.pincode} onChange={(e) => set("pincode", e.target.value)} placeholder="160017" inputMode="numeric" />
+          </Field>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <Button variant="secondary" onClick={useMyLocation} type="button">📍 Use my location</Button>
+          {geoMsg && (
+            <span style={hint}>
+              {geoMsg}
+              {form.latitude ? ` (${form.latitude.toFixed(4)}, ${form.longitude?.toFixed(4)})` : ""}
+            </span>
+          )}
+        </div>
 
-        {step === 3 && (
-          <section>
-            <h2 style={h2}>Hours & preparation</h2>
-            <div style={{ display: "flex", gap: 12 }}>
-              <Field label="Opens"><input style={input} type="time" value={form.open_time} onChange={(e) => set("open_time", e.target.value)} /></Field>
-              <Field label="Closes"><input style={input} type="time" value={form.close_time} onChange={(e) => set("close_time", e.target.value)} /></Field>
-            </div>
-            <div style={{ display: "flex", gap: 12 }}>
-              <Field label="Prep time min (mins)"><input style={input} type="number" value={form.prep_time_min} onChange={(e) => set("prep_time_min", e.target.value)} /></Field>
-              <Field label="Prep time max (mins)"><input style={input} type="number" value={form.prep_time_max} onChange={(e) => set("prep_time_max", e.target.value)} /></Field>
-            </div>
-            <Field label="Tax % (optional)">
-              <input style={input} type="number" value={form.tax_percent} onChange={(e) => set("tax_percent", e.target.value)} />
-            </Field>
-            <Nav>
-              <Button variant="secondary" onClick={() => setStep(2)}>Back</Button>
-              <Button onClick={() => setStep(4)}>Next</Button>
-            </Nav>
-          </section>
-        )}
+        {/* ---- Hours & preparation ---- */}
+        <SectionTitle>Hours & preparation</SectionTitle>
+        <div style={rowFields}>
+          <Field label="Opens"><input style={input} type="time" value={form.open_time} onChange={(e) => set("open_time", e.target.value)} /></Field>
+          <Field label="Closes"><input style={input} type="time" value={form.close_time} onChange={(e) => set("close_time", e.target.value)} /></Field>
+        </div>
+        <div style={rowFields}>
+          <Field label="Prep time min (mins)"><input style={input} type="number" min="0" value={form.prep_time_min} onChange={(e) => set("prep_time_min", e.target.value)} /></Field>
+          <Field label="Prep time max (mins)"><input style={input} type="number" min="0" value={form.prep_time_max} onChange={(e) => set("prep_time_max", e.target.value)} /></Field>
+        </div>
+        <Field label="Tax % (optional)">
+          <input style={input} type="number" min="0" max="100" value={form.tax_percent} onChange={(e) => set("tax_percent", e.target.value)} />
+        </Field>
 
-        {step === 4 && (
-          <section>
-            <h2 style={h2}>Finish setup</h2>
-            <p style={{ color: "var(--color-text-muted)" }}>
-              We'll create your stall and a permanent ordering link. You can add menu categories and items from the dashboard next.
-            </p>
-            <ul style={{ lineHeight: 1.8, fontSize: 14 }}>
-              <li><strong>Name:</strong> {form.name}</li>
-              <li><strong>Link:</strong> /order/{slugify(form.name)}</li>
-              <li><strong>Address:</strong> {form.address || "—"}</li>
-              <li><strong>Hours:</strong> {form.open_time} – {form.close_time}</li>
-            </ul>
-            {error && <div style={errorBox}>{error}</div>}
-            <Nav>
-              <Button variant="secondary" onClick={() => setStep(3)}>Back</Button>
-              <Button onClick={finish} disabled={busy}>{busy ? "Creating…" : "Finish Setup"}</Button>
-            </Nav>
-          </section>
-        )}
+        {error && <div style={errorBox}>{error}</div>}
+
+        {/* ---- Actions ---- */}
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <Button variant="secondary" onClick={backToLogin} type="button">Cancel</Button>
+          <Button fullWidth onClick={finish} disabled={busy}>{busy ? "Creating…" : "Finish Setup"}</Button>
+        </div>
       </div>
     </div>
   );
 }
 
-function Steps({ step }: { step: number }) {
-  const labels = ["Business", "Location", "Hours", "Finish"];
-  return (
-    <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
-      {labels.map((l, i) => {
-        const n = i + 1;
-        const active = n === step;
-        const done = n < step;
-        return (
-          <div key={l} style={{ flex: 1, textAlign: "center" }}>
-            <div
-              style={{
-                height: 6,
-                borderRadius: 4,
-                background: done || active ? "var(--color-primary)" : "var(--color-border)",
-              }}
-            />
-            <span style={{ fontSize: 12, color: active ? "var(--color-primary)" : "var(--color-text-muted)" }}>{l}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+const SectionTitle = ({ children }: { children: React.ReactNode }) => (
+  <h3 style={{ margin: "18px 0 10px", fontSize: 14, textTransform: "uppercase", letterSpacing: 0.4, color: "var(--color-text-muted)" }}>
+    {children}
+  </h3>
+);
 
 const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div style={{ flex: 1, marginBottom: 12 }}>
@@ -215,21 +216,16 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
   </div>
 );
 
-const Nav = ({ children }: { children: React.ReactNode }) => (
-  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>{children}</div>
-);
-
 const wrap: React.CSSProperties = { minHeight: "100vh", display: "grid", placeItems: "center", padding: 20 };
 const card: React.CSSProperties = {
   width: "100%",
-  maxWidth: 520,
+  maxWidth: 560,
   background: "var(--color-surface)",
   border: "1px solid var(--color-border)",
   borderRadius: 16,
   boxShadow: "var(--shadow-card)",
   padding: 28,
 };
-const h2: React.CSSProperties = { marginTop: 0 };
 const input: React.CSSProperties = {
   width: "100%",
   padding: "10px 12px",
@@ -237,9 +233,19 @@ const input: React.CSSProperties = {
   borderRadius: 10,
   fontSize: 15,
 };
-const hint: React.CSSProperties = { fontSize: 13, color: "var(--color-text-muted)" };
+const rowFields: React.CSSProperties = { display: "flex", gap: 12, flexWrap: "wrap" };
+const hint: React.CSSProperties = { fontSize: 13, color: "var(--color-text-muted)", margin: "0 0 4px" };
+const linkBtn: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  color: "var(--color-primary)",
+  fontWeight: 600,
+  fontSize: 13,
+  cursor: "pointer",
+  padding: 0,
+};
 const errorBox: React.CSSProperties = {
-  marginTop: 12,
+  marginTop: 14,
   padding: "9px 12px",
   background: "#fdecea",
   color: "#b42318",

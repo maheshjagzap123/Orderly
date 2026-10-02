@@ -13,6 +13,8 @@ interface PayArgs {
 
 export interface PayResult {
   orderNumber: number;
+  /** Secure tracking token when available (dev path). */
+  trackToken?: string | null;
 }
 
 /** How a payment ended, so the checkout UI can show the right screen. */
@@ -35,8 +37,8 @@ export class PaymentError extends Error {
  */
 export async function payForCart(args: PayArgs): Promise<PayResult> {
   if (!razorpayEnabled) {
-    const { orderNumber } = await placeOrder(args);
-    return { orderNumber };
+    const { orderNumber, trackToken } = await placeOrder(args);
+    return { orderNumber, trackToken };
   }
   return payWithRazorpay(args);
 }
@@ -85,12 +87,30 @@ function loadRazorpayScript(): Promise<void> {
   });
 }
 
-/** Poll the order until the webhook assigns its number (or time out). */
+/**
+ * Poll the order until the webhook assigns its number (or time out).
+ * Uses the SECURITY DEFINER get_order_confirmation RPC (migration 0006) by the
+ * known order id, so it works without a table-wide anon SELECT on orders. Falls
+ * back to a direct select for DBs where 0006 isn't applied yet.
+ */
 async function waitForOrderNumber(orderId: string, tries = 20, delayMs = 1000): Promise<number> {
   for (let i = 0; i < tries; i++) {
-    const { data } = await supabase.from("orders").select("order_number,payment_status").eq("id", orderId).maybeSingle();
-    if (data?.order_number != null) return data.order_number;
-    if (data?.payment_status === "FAILED") throw new PaymentError("FAILED", "Payment failed");
+    let orderNumber: number | null = null;
+    let paymentStatus: string | null = null;
+
+    const rpc = await supabase.rpc("get_order_confirmation", { p_order_id: orderId });
+    if (!rpc.error && Array.isArray(rpc.data) && rpc.data[0]) {
+      orderNumber = rpc.data[0].order_number;
+      paymentStatus = rpc.data[0].payment_status;
+    } else {
+      // Fallback for pre-0006 databases.
+      const { data } = await supabase.from("orders").select("order_number,payment_status").eq("id", orderId).maybeSingle();
+      orderNumber = data?.order_number ?? null;
+      paymentStatus = data?.payment_status ?? null;
+    }
+
+    if (orderNumber != null) return orderNumber;
+    if (paymentStatus === "FAILED") throw new PaymentError("FAILED", "Payment failed");
     await new Promise((r) => setTimeout(r, delayMs));
   }
   throw new PaymentError("TIMEOUT", "Payment is taking longer than expected. Check your order history shortly.");

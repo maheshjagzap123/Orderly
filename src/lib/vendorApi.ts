@@ -32,20 +32,38 @@ export interface CreateBusinessInput {
   tax_percent?: number;
 }
 
-/** Create the business for the current user and mark onboarding complete. */
+/**
+ * Create the business for the current user and mark onboarding complete.
+ *
+ * - If the user ALREADY has a business, return it (idempotent — avoids creating
+ *   duplicates and getting stuck when onboarding is retried).
+ * - The `slug` column is globally unique; if the chosen slug is taken, retry
+ *   with a short random suffix so setup never dead-ends on a name clash.
+ */
 export async function createBusiness(input: CreateBusinessInput): Promise<Business> {
   const { data: userData } = await supabase.auth.getUser();
   const uid = userData.user?.id;
   if (!uid) throw new Error("Not authenticated");
 
-  const { data, error } = await supabase
-    .from("businesses")
-    .insert({ ...input, owner_id: uid, onboarding_complete: true })
-    .select("*")
-    .single();
+  // Already onboarded? Reuse it instead of inserting a duplicate.
+  const existing = await getMyBusiness();
+  if (existing) return existing;
 
-  if (error) throw error;
-  return data;
+  const baseSlug = input.slug;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const slug = attempt === 0 ? baseSlug : `${baseSlug}-${Math.random().toString(36).slice(2, 6)}`;
+    const { data, error } = await supabase
+      .from("businesses")
+      .insert({ ...input, slug, owner_id: uid, onboarding_complete: true })
+      .select("*")
+      .single();
+
+    if (!error) return data;
+    // 23505 = unique_violation (slug taken) → try another slug.
+    const code = (error as { code?: string }).code;
+    if (code !== "23505") throw error;
+  }
+  throw new Error("Could not generate a unique link for your shop. Please try a different name.");
 }
 
 /** Update fields on a business. */
@@ -101,6 +119,56 @@ export async function getRecentOrders(businessId: string, limit = 10): Promise<O
   return data ?? [];
 }
 
+/** Fetch only ACTIVE orders (NEW/ACCEPTED/PREPARING/READY) for the live queue. */
+export async function getActiveOrders(businessId: string): Promise<Order[]> {
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("business_id", businessId)
+    .in("status", ["NEW", "ACCEPTED", "PREPARING", "READY"])
+    .order("placed_at", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export interface CompletedOrdersPage {
+  rows: Order[];
+  total: number;
+}
+
+/**
+ * Fetch COMPLETED/CANCELLED orders, paginated server-side, with optional
+ * since-date and search. Keeps the client from downloading hundreds of rows.
+ */
+export async function getCompletedOrders(
+  businessId: string,
+  opts: { page: number; pageSize: number; since?: Date | null; search?: string; source?: "QR" | "KIOSK" | "ALL" } = { page: 1, pageSize: 10 }
+): Promise<CompletedOrdersPage> {
+  const { page, pageSize, since, search, source } = opts;
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  let q = supabase
+    .from("orders")
+    .select("*", { count: "exact" })
+    .eq("business_id", businessId)
+    .in("status", ["COMPLETED", "CANCELLED"]);
+
+  if (since) q = q.gte("placed_at", since.toISOString());
+  if (source && source !== "ALL") q = q.eq("source", source);
+  if (search && search.trim()) {
+    const s = search.trim();
+    // order_number is numeric; match customer_name OR exact order number.
+    const asNum = Number(s);
+    if (!Number.isNaN(asNum)) q = q.or(`customer_name.ilike.%${s}%,order_number.eq.${asNum}`);
+    else q = q.ilike("customer_name", `%${s}%`);
+  }
+
+  const { data, error, count } = await q.order("placed_at", { ascending: false }).range(from, to);
+  if (error) throw error;
+  return { rows: data ?? [], total: count ?? 0 };
+}
+
 export interface TodayMetrics {
   orders: number;
   revenue: number;
@@ -143,21 +211,10 @@ export async function getTodayMetrics(businessId: string): Promise<TodayMetrics>
 }
 
 // ---------- Orders ----------
-
-/** Valid next statuses in the lifecycle. */
-export const NEXT_STATUS: Partial<Record<OrderStatus, OrderStatus>> = {
-  NEW: "ACCEPTED",
-  ACCEPTED: "PREPARING",
-  PREPARING: "READY",
-  READY: "COMPLETED",
-};
-
-export const NEXT_ACTION_LABEL: Partial<Record<OrderStatus, string>> = {
-  NEW: "Accept",
-  ACCEPTED: "Start Preparing",
-  PREPARING: "Mark Ready",
-  READY: "Complete",
-};
+//
+// The authoritative vendor order state machine lives in
+// `src/features/vendor/orderUi.tsx` (2-step: NEW → PREPARING → COMPLETED).
+// Do NOT reintroduce a second status helper here — there must be exactly one.
 
 /** Preset cancellation reasons shown to the vendor. */
 export const CANCEL_REASONS = [
@@ -243,6 +300,7 @@ export interface ItemInput {
   is_available?: boolean;
   display_order?: number;
   badge?: ItemBadge | null;
+  prep_time_min?: number | null;
 }
 
 export async function createItem(businessId: string, input: ItemInput): Promise<Item> {
@@ -259,6 +317,27 @@ export async function updateItem(id: string, patch: Partial<Item>): Promise<Item
   const { data, error } = await supabase.from("items").update(patch).eq("id", id).select("*").single();
   if (error) throw error;
   return data;
+}
+
+/**
+ * Persist a new ordering for items. `orderedIds` is the full list in the desired
+ * order; each row's display_order is set to its index. Writes are sequential so
+ * rapid successive drags can't interleave partial updates; any failure throws so
+ * the caller can revert to the authoritative DB order.
+ */
+export async function reorderItems(orderedIds: string[]): Promise<void> {
+  for (let idx = 0; idx < orderedIds.length; idx++) {
+    const { error } = await supabase.from("items").update({ display_order: idx }).eq("id", orderedIds[idx]);
+    if (error) throw error;
+  }
+}
+
+/** Persist a new ordering for categories (display_order = index), sequentially. */
+export async function reorderCategories(orderedIds: string[]): Promise<void> {
+  for (let idx = 0; idx < orderedIds.length; idx++) {
+    const { error } = await supabase.from("categories").update({ display_order: idx }).eq("id", orderedIds[idx]);
+    if (error) throw error;
+  }
 }
 
 export async function deleteItem(id: string): Promise<void> {
@@ -280,12 +359,38 @@ export async function toggleItemAvailable(id: string, available: boolean): Promi
 // ---------- Image upload ----------
 
 /** Upload an image to the menu-images bucket and return its public URL. */
+/** Allowed image types + max size for menu uploads. */
+export const MENU_IMAGE_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const MENU_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const MENU_IMAGE_EXT: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+/** Validate a candidate menu image. Returns an error message, or null if valid. */
+export function validateMenuImage(file: File): string | null {
+  if (!MENU_IMAGE_TYPES.includes(file.type)) {
+    return "Please choose a JPG, PNG, WebP, or GIF image.";
+  }
+  if (file.size > MENU_IMAGE_MAX_BYTES) {
+    return `Image is too large (max ${(MENU_IMAGE_MAX_BYTES / 1024 / 1024).toFixed(0)} MB).`;
+  }
+  return null;
+}
+
 export async function uploadMenuImage(businessId: string, file: File): Promise<string> {
-  const ext = file.name.split(".").pop() || "jpg";
+  const invalid = validateMenuImage(file);
+  if (invalid) throw new Error(invalid);
+
+  // Derive the extension from the (verified) MIME type, not the spoofable name.
+  const ext = MENU_IMAGE_EXT[file.type] ?? "jpg";
   const path = `${businessId}/${crypto.randomUUID()}.${ext}`;
   const { error } = await supabase.storage.from("menu-images").upload(path, file, {
     cacheControl: "3600",
     upsert: false,
+    contentType: file.type,
   });
   if (error) throw error;
   const { data } = supabase.storage.from("menu-images").getPublicUrl(path);
@@ -356,6 +461,51 @@ export async function getReport(businessId: string, since: Date): Promise<Report
     kioskOrders,
     bestSellers: bestSellers.slice(0, 5),
   };
+}
+
+/** A flat order row for CSV export (no sensitive/internal fields). */
+export interface ReportOrderRow {
+  orderNumber: number | null;
+  placedAt: string;
+  customerName: string;
+  source: string;
+  items: string;
+  subtotal: number;
+  tax: number;
+  total: number;
+  status: string;
+}
+
+/** Fetch orders in a period as flat rows suitable for CSV export. */
+export async function getReportOrders(businessId: string, since: Date): Promise<ReportOrderRow[]> {
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id,order_number,customer_name,source,status,subtotal,tax_amount,total,placed_at")
+    .eq("business_id", businessId)
+    .gte("placed_at", since.toISOString())
+    .order("placed_at", { ascending: true });
+  if (error) throw error;
+  const rows = orders ?? [];
+  if (rows.length === 0) return [];
+
+  // One query for all line items, grouped into a readable summary per order.
+  const itemsByOrder = await getOrderItemsFor(rows.map((o) => o.id));
+
+  return rows.map((o) => {
+    const its = itemsByOrder[o.id] ?? [];
+    const summary = its.map((it) => `${it.quantity}x ${it.item_name}`).join("; ");
+    return {
+      orderNumber: o.order_number,
+      placedAt: o.placed_at,
+      customerName: o.customer_name || "Guest",
+      source: o.source,
+      items: summary,
+      subtotal: Number(o.subtotal),
+      tax: Number(o.tax_amount),
+      total: Number(o.total),
+      status: o.status,
+    };
+  });
 }
 
 // ---------- Profile ----------

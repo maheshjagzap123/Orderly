@@ -45,6 +45,7 @@ export function CheckoutModal({
   const [message, setMessage] = useState<string | null>(null);
   const [priceChanges, setPriceChanges] = useState<PriceChange[]>([]);
   const [orderNumber, setOrderNumber] = useState<number | null>(null);
+  const [trackToken, setTrackToken] = useState<string | null>(null);
 
   // Duplicate-order guard: blocks a second Pay while one attempt is in flight.
   const inFlight = useRef(false);
@@ -86,13 +87,14 @@ export function CheckoutModal({
 
       // 2. Take payment. Razorpay path moves through pending; dev path returns immediately.
       setPhase(razorpayEnabled ? "pending" : "paying");
-      const { orderNumber } = await payForCart({
+      const { orderNumber, trackToken } = await payForCart({
         businessId: business.id,
         source: mode,
         customerName: name,
         lines: cart.lines.map((l) => ({ item_id: l.item.id, quantity: l.quantity })),
       });
       setOrderNumber(orderNumber);
+      setTrackToken(trackToken ?? null);
       setPhase("done");
       cart.clear();
     } catch (e) {
@@ -221,7 +223,13 @@ export function CheckoutModal({
 
         {/* ---- Done ---- */}
         {phase === "done" && orderNumber != null && (
-          <OrderTracker business={business} orderNumber={orderNumber} onClose={onClose} />
+          <OrderTracker
+            business={business}
+            orderNumber={orderNumber}
+            trackToken={trackToken}
+            onClose={onClose}
+            autoCloseMs={mode === "KIOSK" ? 2000 : undefined}
+          />
         )}
       </div>
     </div>

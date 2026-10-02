@@ -59,3 +59,7 @@ button {
   0% { box-shadow: 0 0 0 3px rgba(239, 59, 50, 0.35); }
   100% { box-shadow: var(--shadow-card); }
 }
+
+@keyframes orderly-spin {
+  to { transform: rotate(360deg); }
+}
