@@ -3,8 +3,15 @@ import { supabase } from "@/lib/supabase";
 import type { Order } from "@/lib/database.types";
 import { getRecentOrders } from "@/lib/vendorApi";
 
+/** Sound-alert preference (vendor-toggleable, persisted). Defaults ON. */
+export const SOUND_PREF_KEY = "orderly.soundAlerts";
+export function soundEnabled(): boolean {
+  return localStorage.getItem(SOUND_PREF_KEY) !== "off";
+}
+
 /** Play a short chime using the Web Audio API (no asset file needed). */
 function playChime() {
+  if (!soundEnabled()) return;
   try {
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new Ctx();

@@ -1,12 +1,12 @@
 import type { OrderStatus } from "@/lib/database.types";
 
 const colors: Record<OrderStatus, { bg: string; fg: string }> = {
-  NEW: { bg: "#fde8e6", fg: "#c42b22" },
-  ACCEPTED: { bg: "#e0edff", fg: "#1d4ed8" },
-  PREPARING: { bg: "#fef3c7", fg: "#b45309" },
-  READY: { bg: "#dcfce7", fg: "#15803d" },
-  COMPLETED: { bg: "#eef2f5", fg: "#475569" },
-  CANCELLED: { bg: "#f3f4f6", fg: "#6b7280" },
+  NEW: { bg: "#fff3dc", fg: "#a96500" },
+  ACCEPTED: { bg: "#eaf2ff", fg: "#2864b5" },
+  PREPARING: { bg: "#fff4e5", fg: "#d97706" },
+  READY: { bg: "#eaf9ef", fg: "#16804a" },
+  COMPLETED: { bg: "#eaf9ef", fg: "#16804a" },
+  CANCELLED: { bg: "#fff0ee", fg: "#d7372e" },
 };
 
 const labels: Record<OrderStatus, string> = {

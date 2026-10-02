@@ -455,3 +455,167 @@ export async function getDashboardAnalytics(businessId: string, days = 7): Promi
 
   return { daily, hourly, topItems: topItems.slice(0, 5), peak: peakHour && peakHour.value > 0 ? peakHour : null };
 }
+
+// ---------- Dashboard (analytics-only) data ----------
+
+import type { OrderStatus as OrderStatusT } from "./database.types";
+
+export interface KpiTrend {
+  value: number;
+  /** percent change vs the comparison period; null when no baseline */
+  deltaPct: number | null;
+}
+
+export interface DashboardData {
+  kpis: {
+    orders: KpiTrend;
+    revenue: KpiTrend;
+    itemsSold: KpiTrend;
+    avgOrderValue: KpiTrend;
+  };
+  statusCounts: Record<OrderStatusT, number>;
+  totalOrders: number;
+  source: { qr: number; kiosk: number };
+  daily: DailyPoint[];     // for Sales Overview + Revenue Trend over the selected range
+  hourly: HourlyPoint[];   // peak hours (today-ish range)
+  peak: { label: string; value: number } | null;
+  topItems: { name: string; qty: number; revenue: number }[];
+}
+
+const EMPTY_STATUS: Record<OrderStatusT, number> = {
+  NEW: 0, ACCEPTED: 0, PREPARING: 0, READY: 0, COMPLETED: 0, CANCELLED: 0,
+};
+
+function startOfToday(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+async function itemsSoldForOrderIds(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const { data } = await supabase.from("order_items").select("quantity,order_id").in("order_id", ids);
+  return (data ?? []).reduce((s, r) => s + r.quantity, 0);
+}
+
+/**
+ * One call powering the analytics-only dashboard. Everything derives from real
+ * order rows for this business — no invented numbers.
+ *
+ * `rangeDays`: window for Sales Overview / Revenue Trend (1 = today, else N days).
+ * KPIs always compare today vs yesterday regardless of the chart range.
+ */
+export async function getDashboardData(businessId: string, rangeDays = 7): Promise<DashboardData> {
+  // Pull enough history to cover both the chart range and yesterday.
+  const spanDays = Math.max(rangeDays, 2);
+  const since = new Date();
+  since.setDate(since.getDate() - (spanDays - 1));
+  since.setHours(0, 0, 0, 0);
+
+  const { data: ordersRaw, error } = await supabase
+    .from("orders")
+    .select("id,total,status,payment_status,source,placed_at")
+    .eq("business_id", businessId)
+    .gte("placed_at", since.toISOString());
+  if (error) throw error;
+  const orders = ordersRaw ?? [];
+
+  const today = startOfToday();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  const paid = orders.filter((o) => o.payment_status === "SUCCESS");
+  const paidToday = paid.filter((o) => new Date(o.placed_at) >= today);
+  const paidYesterday = paid.filter((o) => {
+    const t = new Date(o.placed_at);
+    return t >= yesterday && t < today;
+  });
+
+  const revToday = paidToday.reduce((s, o) => s + Number(o.total), 0);
+  const revYest = paidYesterday.reduce((s, o) => s + Number(o.total), 0);
+  const itemsToday = await itemsSoldForOrderIds(paidToday.map((o) => o.id));
+  const itemsYest = await itemsSoldForOrderIds(paidYesterday.map((o) => o.id));
+  const aovToday = paidToday.length ? revToday / paidToday.length : 0;
+  const aovYest = paidYesterday.length ? revYest / paidYesterday.length : 0;
+
+  const delta = (now: number, prev: number): number | null =>
+    prev === 0 ? (now > 0 ? 100 : null) : Math.round(((now - prev) / prev) * 100);
+
+  // Status breakdown across the whole window (analytics overview).
+  const statusCounts = { ...EMPTY_STATUS };
+  for (const o of orders) statusCounts[o.status as OrderStatusT]++;
+
+  // Source split (paid orders in window).
+  const qr = paid.filter((o) => o.source === "QR").length;
+  const kiosk = paid.filter((o) => o.source === "KIOSK").length;
+
+  // Daily series over the selected chart range.
+  const chartSince = new Date();
+  chartSince.setDate(chartSince.getDate() - (rangeDays - 1));
+  chartSince.setHours(0, 0, 0, 0);
+  const dayFmt = new Intl.DateTimeFormat("en-US", { weekday: "short" });
+  const daily: DailyPoint[] = [];
+  const dayIndex = new Map<string, number>();
+  for (let i = 0; i < rangeDays; i++) {
+    const d = new Date(chartSince);
+    d.setDate(chartSince.getDate() + i);
+    dayIndex.set(d.toDateString(), i);
+    daily.push({ label: rangeDays === 1 ? "Today" : dayFmt.format(d), orders: 0, revenue: 0 });
+  }
+  for (const o of paid) {
+    const di = dayIndex.get(new Date(o.placed_at).toDateString());
+    if (di != null) {
+      daily[di].orders += 1;
+      daily[di].revenue += Number(o.total);
+    }
+  }
+
+  // Hourly histogram (8 AM–10 PM) over the window.
+  const hoursList = Array.from({ length: 15 }, (_, i) => i + 8);
+  const hourly: HourlyPoint[] = hoursList.map((h) => ({
+    label: `${((h + 11) % 12) + 1} ${h < 12 ? "AM" : "PM"}`,
+    value: 0,
+  }));
+  for (const o of paid) {
+    const hi = hoursList.indexOf(new Date(o.placed_at).getHours());
+    if (hi >= 0) hourly[hi].value += 1;
+  }
+  const peak = hourly.reduce<{ label: string; value: number } | null>(
+    (best, h) => (!best || h.value > best.value ? { label: h.label, value: h.value } : best),
+    null
+  );
+
+  // Top items over the window.
+  const topItems: { name: string; qty: number; revenue: number }[] = [];
+  if (paid.length > 0) {
+    const { data: oi } = await supabase
+      .from("order_items")
+      .select("item_name,quantity,line_total,order_id")
+      .in("order_id", paid.map((o) => o.id));
+    const map = new Map<string, { qty: number; revenue: number }>();
+    for (const r of oi ?? []) {
+      const cur = map.get(r.item_name) ?? { qty: 0, revenue: 0 };
+      cur.qty += r.quantity;
+      cur.revenue += Number(r.line_total);
+      map.set(r.item_name, cur);
+    }
+    for (const [name, v] of map) topItems.push({ name, qty: v.qty, revenue: v.revenue });
+    topItems.sort((a, b) => b.qty - a.qty);
+  }
+
+  return {
+    kpis: {
+      orders: { value: paidToday.length, deltaPct: delta(paidToday.length, paidYesterday.length) },
+      revenue: { value: revToday, deltaPct: delta(revToday, revYest) },
+      itemsSold: { value: itemsToday, deltaPct: delta(itemsToday, itemsYest) },
+      avgOrderValue: { value: aovToday, deltaPct: delta(aovToday, aovYest) },
+    },
+    statusCounts,
+    totalOrders: orders.length,
+    source: { qr, kiosk },
+    daily,
+    hourly,
+    peak: peak && peak.value > 0 ? peak : null,
+    topItems: topItems.slice(0, 5),
+  };
+}
