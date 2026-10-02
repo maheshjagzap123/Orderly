@@ -144,13 +144,13 @@ function LocationTab() {
 
       <section style={card}>
         <h3 style={{ marginTop: 0 }}>Hours & Prep</h3>
-        <div style={{ display: "flex", gap: 12 }}>
-          <div style={{ flex: 1 }}><label style={lbl}>Opens</label><input style={input} type="time" value={openTime} onChange={(e) => setOpenTime(e.target.value)} /></div>
-          <div style={{ flex: 1 }}><label style={lbl}>Closes</label><input style={input} type="time" value={closeTime} onChange={(e) => setCloseTime(e.target.value)} /></div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 140 }}><label style={lbl}>Opens</label><input style={input} type="time" value={openTime} onChange={(e) => setOpenTime(e.target.value)} /></div>
+          <div style={{ flex: 1, minWidth: 140 }}><label style={lbl}>Closes</label><input style={input} type="time" value={closeTime} onChange={(e) => setCloseTime(e.target.value)} /></div>
         </div>
-        <div style={{ display: "flex", gap: 12 }}>
-          <div style={{ flex: 1 }}><label style={lbl}>Prep min (mins)</label><input style={input} type="number" value={prepMin} onChange={(e) => setPrepMin(e.target.value)} /></div>
-          <div style={{ flex: 1 }}><label style={lbl}>Prep max (mins)</label><input style={input} type="number" value={prepMax} onChange={(e) => setPrepMax(e.target.value)} /></div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 140 }}><label style={lbl}>Prep min (mins)</label><input style={input} type="number" value={prepMin} onChange={(e) => setPrepMin(e.target.value)} /></div>
+          <div style={{ flex: 1, minWidth: 140 }}><label style={lbl}>Prep max (mins)</label><input style={input} type="number" value={prepMax} onChange={(e) => setPrepMax(e.target.value)} /></div>
         </div>
       </section>
 

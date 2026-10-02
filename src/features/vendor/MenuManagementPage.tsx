@@ -128,7 +128,7 @@ export function MenuManagementPage() {
                     >
                       {canReorderItems && <span style={dragHandle} aria-hidden title="Drag to reorder">⠿</span>}
                       <div style={thumb}>{item.image_url ? <img src={item.image_url} alt="" style={img} /> : "🍽️"}</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ flex: 1, minWidth: 140 }}>
                         <div style={{ fontWeight: 600 }}>{item.name}</div>
                         <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{catName(item.category_id)}</div>
                       </div>
@@ -311,6 +311,9 @@ const search: React.CSSProperties = {
 const row: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 12, background: "var(--color-surface)",
   border: "1px solid var(--color-border)", borderRadius: 12, padding: 12,
+  // Allow the price + Available + Edit + delete controls to wrap below the
+  // name on narrow screens instead of overflowing the row.
+  flexWrap: "wrap",
 };
 const thumb: React.CSSProperties = {
   width: 44, height: 44, borderRadius: 10, background: "var(--color-bg)",

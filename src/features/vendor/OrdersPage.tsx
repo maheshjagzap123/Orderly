@@ -404,7 +404,8 @@ function CompletedTable({
 }) {
   return (
     <div style={{ ...card, padding: 0, overflow: "hidden" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+      <table style={{ width: "100%", minWidth: 640, borderCollapse: "collapse", fontSize: 14 }}>
         <thead>
           <tr style={{ background: "var(--color-bg)", textAlign: "left" }}>
             {["#", "Customer", "Items", "Total", "Completed", "Source", "Payment", ""].map((h) => <th key={h} style={th}>{h}</th>)}
@@ -429,6 +430,7 @@ function CompletedTable({
           })}
         </tbody>
       </table>
+      </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid var(--color-border)" }}>
         <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
           Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total} orders
@@ -539,7 +541,7 @@ const pillBtn = (active: boolean, success: boolean): React.CSSProperties => ({
   color: active ? (success ? "var(--color-positive)" : "#fff") : "var(--color-text)",
   fontWeight: 600, fontSize: 13, cursor: "pointer",
 });
-const searchInput: React.CSSProperties = { flex: 1, minWidth: 220, padding: "9px 12px", border: "1px solid var(--color-border)", borderRadius: 10, fontSize: 14 };
+const searchInput: React.CSSProperties = { flex: 1, minWidth: 160, padding: "9px 12px", border: "1px solid var(--color-border)", borderRadius: 10, fontSize: 14 };
 const th: React.CSSProperties = { padding: "10px 14px", fontSize: 12, color: "var(--color-text-muted)", fontWeight: 600 };
 const td: React.CSSProperties = { padding: "12px 14px" };
 const viewLink: React.CSSProperties = { background: "none", border: "1px solid var(--color-border)", borderRadius: 8, padding: "5px 12px", fontWeight: 600, fontSize: 13, cursor: "pointer", color: "var(--color-primary)" };

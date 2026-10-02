@@ -128,7 +128,7 @@ export function DashboardPage() {
       )}
 
       {/* KPI cards */}
-      <div style={kpiGrid}>
+      <div style={kpiGrid} className="dash-kpi-grid">
         <Kpi label="Today's Orders" icon="🛒" value={data ? String(data.kpis.orders.value) : "—"} trend={data?.kpis.orders.deltaPct ?? null} loading={dataLoading} />
         <Kpi label="Today's Revenue" icon="₹" value={data ? formatINR(data.kpis.revenue.value) : "—"} trend={data?.kpis.revenue.deltaPct ?? null} loading={dataLoading} />
         <Kpi label="Items Sold" icon="🍽️" value={data ? String(data.kpis.itemsSold.value) : "—"} trend={data?.kpis.itemsSold.deltaPct ?? null} loading={dataLoading} />
@@ -136,7 +136,7 @@ export function DashboardPage() {
       </div>
 
       {/* Sales Overview + Order Status */}
-      <div style={row2}>
+      <div style={row2} className="dash-row2">
         <Card
           title="Sales Overview"
           action={
@@ -175,7 +175,7 @@ export function DashboardPage() {
       </div>
 
       {/* Peak Hours + Top Selling */}
-      <div style={row2}>
+      <div style={row2} className="dash-row2">
         <Card title="Peak Hours">
           <PeakHours data={data} loading={dataLoading} />
         </Card>
@@ -203,7 +203,7 @@ export function DashboardPage() {
       </div>
 
       {/* Order Source + Revenue Trend + Business Hours */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginTop: 16, alignItems: "stretch" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginTop: 16, alignItems: "stretch" }} className="dash-row3">
         <Card title="Order Source">
           {dataLoading ? <Skeleton h={140} /> : totalSource > 0 ? (
             <DonutChart
@@ -241,9 +241,26 @@ export function DashboardPage() {
           <button style={{ ...linkBtn, marginTop: 14 }} onClick={() => navigate("/vendor/settings/location")}>Edit Hours →</button>
         </Card>
       </div>
+
+      <style>{dashResponsiveCss}</style>
     </VendorLayout>
   );
 }
+
+/* On tablets the KPI row drops to 2 columns; on phones everything stacks to 1. */
+const dashResponsiveCss = `
+@media (max-width: 1024px) {
+  .dash-kpi-grid { grid-template-columns: repeat(2, 1fr) !important; }
+}
+@media (max-width: 860px) {
+  .dash-kpi-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  .dash-row2 { grid-template-columns: 1fr !important; }
+  .dash-row3 { grid-template-columns: 1fr !important; }
+}
+@media (max-width: 520px) {
+  .dash-kpi-grid { grid-template-columns: 1fr !important; }
+}
+`;
 
 /* ---------------- sub-components ---------------- */
 

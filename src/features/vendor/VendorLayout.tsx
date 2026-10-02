@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { signOut } from "@/lib/auth";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 
 const nav = [
   { to: "/vendor", label: "Dashboard", icon: "📊", end: true },
@@ -27,6 +28,19 @@ export function VendorLayout({
 }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const isMobile = useIsMobile();
+
+  // Mobile: the sidebar is an off-canvas drawer toggled by the hamburger.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Close the drawer whenever the route changes (e.g. a nav link was tapped),
+  // and whenever we leave mobile width.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [pathname]);
+  useEffect(() => {
+    if (!isMobile) setDrawerOpen(false);
+  }, [isMobile]);
 
   async function handleLogout() {
     await signOut();
@@ -40,48 +54,81 @@ export function VendorLayout({
   if (bare) {
     return (
       <div style={{ height: "100vh", overflow: "auto", background: "var(--color-bg)" }}>
-        <main style={{ padding: 24, maxWidth: 1100, margin: "0 auto" }}>{children}</main>
+        <main style={{ padding: isMobile ? 16 : 24, maxWidth: 1100, margin: "0 auto" }}>{children}</main>
       </div>
     );
   }
 
+  const sidebarContent = (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px 18px" }}>
+        <div style={brandLogo}>🍳</div>
+        <strong style={{ fontSize: 15, lineHeight: 1.2 }}>{businessName ?? "Orderly"}</strong>
+      </div>
+
+      <nav style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+        {nav.map((n) => (
+          <NavLink
+            key={n.label}
+            to={n.to}
+            end={n.end}
+            style={({ isActive }) =>
+              navItem(n.label === "Settings" ? isSettingsActive : n.label === "Profile & Team" ? pathname.startsWith("/vendor/settings/profile") : isActive)
+            }
+          >
+            <span>{n.icon}</span>
+            <span style={{ flex: 1 }}>{n.label}</span>
+            {n.label === "Orders" && ordersBadge ? <span style={badge}>{ordersBadge}</span> : null}
+          </NavLink>
+        ))}
+      </nav>
+
+      <button onClick={handleLogout} style={{ ...navItem(false), width: "100%", textAlign: "left" }}>
+        <span>⏻</span>
+        <span>Logout</span>
+      </button>
+      <div style={helpCard}>
+        <strong style={{ fontSize: 13 }}>Need Help?</strong>
+        <div style={{ fontSize: 12, color: "#9aa3af" }}>Contact Support</div>
+      </div>
+    </>
+  );
+
+  // ---- Mobile: top app bar + off-canvas drawer ----
+  if (isMobile) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "var(--color-bg)" }}>
+        <header style={mobileTopbar}>
+          <button aria-label="Open menu" onClick={() => setDrawerOpen(true)} style={hamburger}>☰</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={brandLogo}>🍳</div>
+            <strong style={{ fontSize: 15 }}>{businessName ?? "Orderly"}</strong>
+          </div>
+          <div style={onlinePill}>● Online</div>
+        </header>
+
+        {/* Drawer + backdrop */}
+        {drawerOpen && (
+          <div style={drawerBackdrop} onClick={() => setDrawerOpen(false)}>
+            <aside
+              style={{ ...sidebar, height: "100%", animation: "orderly-drawer-in-left 0.2s ease-out" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {sidebarContent}
+            </aside>
+          </div>
+        )}
+
+        <main style={{ padding: 16, flex: 1, minWidth: 0 }}>{children}</main>
+      </div>
+    );
+  }
+
+  // ---- Desktop: fixed sidebar + topbar ----
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
-      {/* Sidebar */}
-      <aside style={sidebar}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px 18px" }}>
-          <div style={brandLogo}>🍳</div>
-          <strong style={{ fontSize: 15, lineHeight: 1.2 }}>{businessName ?? "Orderly"}</strong>
-        </div>
+      <aside style={sidebar}>{sidebarContent}</aside>
 
-        <nav style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
-          {nav.map((n) => (
-            <NavLink
-              key={n.label}
-              to={n.to}
-              end={n.end}
-              style={({ isActive }) =>
-                navItem(n.label === "Settings" ? isSettingsActive : n.label === "Profile & Team" ? pathname.startsWith("/vendor/settings/profile") : isActive)
-              }
-            >
-              <span>{n.icon}</span>
-              <span style={{ flex: 1 }}>{n.label}</span>
-              {n.label === "Orders" && ordersBadge ? <span style={badge}>{ordersBadge}</span> : null}
-            </NavLink>
-          ))}
-        </nav>
-
-        <button onClick={handleLogout} style={{ ...navItem(false), width: "100%", textAlign: "left" }}>
-          <span>⏻</span>
-          <span>Logout</span>
-        </button>
-        <div style={helpCard}>
-          <strong style={{ fontSize: 13 }}>Need Help?</strong>
-          <div style={{ fontSize: 12, color: "#9aa3af" }}>Contact Support</div>
-        </div>
-      </aside>
-
-      {/* Main */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100vh" }}>
         <header style={topbar}>
           <div style={onlinePill}>● Online</div>
@@ -122,6 +169,7 @@ const brandLogo: React.CSSProperties = {
   background: "var(--color-primary)",
   display: "grid",
   placeItems: "center",
+  flexShrink: 0,
 };
 const navItem = (active: boolean): React.CSSProperties => ({
   display: "flex",
@@ -159,6 +207,36 @@ const topbar: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "space-between",
   padding: "0 24px",
+};
+const mobileTopbar: React.CSSProperties = {
+  position: "sticky",
+  top: 0,
+  zIndex: 30,
+  height: 56,
+  flexShrink: 0,
+  background: "var(--color-surface)",
+  borderBottom: "1px solid var(--color-border)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  padding: "0 14px",
+};
+const hamburger: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  fontSize: 22,
+  lineHeight: 1,
+  padding: 4,
+  cursor: "pointer",
+  color: "var(--color-text)",
+};
+const drawerBackdrop: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.45)",
+  zIndex: 50,
+  display: "flex",
 };
 const onlinePill: React.CSSProperties = {
   color: "var(--color-positive)",

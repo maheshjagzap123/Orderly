@@ -173,11 +173,11 @@ function MenuInner({
       </div>
 
       {/* Body: menu grid + cart */}
-      <div style={bodyGrid}>
+      <div style={bodyGrid} className="menu-body-grid">
         <div>
           <h2 style={{ marginTop: 0 }}>Our Menu</h2>
           <p style={{ color: "var(--color-text-muted)", marginTop: -8 }}>Delicious food made with fresh ingredients</p>
-          <div style={grid}>
+          <div style={grid} className="menu-item-grid">
             {visibleItems.map((item) => (
               <ItemCard key={item.id} item={item} canOrder={canOrder} />
             ))}
@@ -329,9 +329,28 @@ const responsiveCss = `
 @media (max-width: 860px) {
   .cart-desktop { display: none; }
   .cart-sticky { display: flex !important; }
+  /* Collapse the "menu | 360px cart" grid to a single column so the hidden
+     desktop cart no longer reserves a phantom 360px column that squeezes the
+     menu. This is what broke the kiosk view on phones. */
+  .menu-body-grid { grid-template-columns: 1fr !important; padding: 16px !important; }
+  /* Two item cards per row on phones (instead of one). */
+  .menu-item-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 12px !important; }
 }
-/* Kiosk mode: larger touch targets for a tablet. */
-.kiosk-mode h1 { font-size: 34px; }
+/* Kiosk mode: larger touch targets for a tablet. These apply at ALL widths, so
+   keep them modest and let the mobile breakpoint below rein them back in. */
+.kiosk-mode h1 { font-size: 30px; }
 .kiosk-mode button { font-size: 17px; }
 .kiosk-mode .cart-sticky { padding: 22px 20px; font-size: 18px; }
+
+/* Kiosk on a phone: don't inflate type/targets meant for a tablet. */
+@media (max-width: 860px) {
+  .kiosk-mode h1 { font-size: 24px; }
+  .kiosk-mode button { font-size: 15px; }
+  .kiosk-mode .cart-sticky { padding: 16px 20px; font-size: 16px; }
+}
+
+/* Very small phones: a single column reads better than two cramped cards. */
+@media (max-width: 360px) {
+  .menu-item-grid { grid-template-columns: 1fr !important; }
+}
 `;
